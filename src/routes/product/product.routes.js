@@ -1,14 +1,37 @@
 import express from "express";
-import { createProduct, deleteProduct, getAllProducts, getProductById, updateProduct, updateStock } from "../../controllers/product/product.controller.js";
-
+import {
+  createProductInCategory,
+  getProductsByCategory,
+  getProductsByCategorySlug,
+  updateProductInCategory,
+  deleteProductInCategory,
+  getAllProducts,
+  getProductById,
+  createProduct,
+  updateProduct,
+  deleteProduct,
+} from "../../controllers/product/product.controller.js";
 
 const router = express.Router();
 
-router.post("/create", createProduct);
+// Category-based product routes
+router.post("/categories/:categoryId/products", createProductInCategory);
+router.get("/categories/:categoryId/products", getProductsByCategory);
+router.get("/categories/slug/:slug/products", getProductsByCategorySlug);
+router.patch(
+  "/categories/:categoryId/products/:productId",
+  updateProductInCategory
+);
+router.delete(
+  "/categories/:categoryId/products/:productId",
+  deleteProductInCategory
+);
+
+// General product routes
 router.get("/", getAllProducts);
-router.get("/:id", getProductById);
-router.patch("/update/:id", updateProduct);
-router.delete("/update/:id", deleteProduct);
-router.patch("/update/:id/stock", updateStock);
+router.get("/:productId", getProductById);
+router.post("/", createProduct);
+router.patch("/:productId", updateProduct);
+router.delete("/:productId", deleteProduct);
 
 export default router;
