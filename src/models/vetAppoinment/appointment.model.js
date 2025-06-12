@@ -7,15 +7,19 @@ const vetAppointmentSchema = new mongoose.Schema(
       ref: "User",
       required: false,
     },
-
     guestInfo: {
       name: String,
       phone: String,
       email: String,
     },
+    appointmentType: {
+      type: String,
+      enum: ["vet", "grooming"],
+      required: true,
+    },
     pet: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Product",
+      ref: "Product", // assuming Product is used for pets
       required: false,
     },
     customPetInfo: {
@@ -25,7 +29,7 @@ const vetAppointmentSchema = new mongoose.Schema(
         enum: ["dog", "cat", "rabbit", "bird", "fish", "other"],
       },
       breed: String,
-      age: String, // e.g. "2 months" or "1 year"
+      age: String,
       gender: { type: String, enum: ["male", "female"] },
       color: String,
     },

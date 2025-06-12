@@ -164,23 +164,6 @@ export const updateProductInCategory = asyncHandler(async (req, res) => {
 });
 
 /* ==================================================
-   DELETE  — DELETE /api/v1/categories/:categoryId/products/:productId
-   ================================================== */
-export const deleteProductInCategory = asyncHandler(async (req, res) => {
-  const { categoryId, productId } = req.params;
-  const deleted = await Product.findOneAndDelete({
-    _id: productId,
-    category_id: categoryId,
-  });
-  if (!deleted)
-    return res
-      .status(404)
-      .json(new ApiResponse(404, null, "Product not found in this category"));
-
-  res.json(new ApiResponse(200, null, "Product deleted successfully"));
-});
-
-/* ==================================================
    READ  — GET all products (with optional pagination & filtering)
    GET /api/v1/products?limit=10&page=1&search=dog&type=pet&minPrice=2000&maxPrice=5000&petType=dog&breed=bull%20dog&gender=male&color=white&category_id=...
    ================================================== */
@@ -192,40 +175,45 @@ export const getAllProducts = asyncHandler(async (req, res) => {
   // Build filter object
   const filter = {};
 
-  // Search by name (case-insensitive)
-  if (req.query.search) {
+  // Only add filter if value is non-empty
+  if (req.query.search && req.query.search.trim() !== "") {
     filter.name = { $regex: req.query.search, $options: "i" };
   }
-
-  // Filter by breed (case-insensitive)
-  if (req.query.breed) {
+  if (req.query.breed && req.query.breed.trim() !== "") {
     filter.breed = { $regex: req.query.breed, $options: "i" };
   }
-
-  // Filter by type
-  if (req.query.type) filter.type = req.query.type;
-
-  // Filter by petType
-  if (req.query.petType) filter.petType = req.query.petType;
-
-  // Filter by gender
-  if (req.query.gender) filter.gender = req.query.gender;
-
-  // Filter by color (case-insensitive)
-  if (req.query.color) {
+  if (req.query.type && req.query.type.trim() !== "") {
+    filter.type = req.query.type;
+  }
+  if (req.query.petType && req.query.petType.trim() !== "") {
+    filter.petType = req.query.petType;
+  }
+  if (req.query.gender && req.query.gender.trim() !== "") {
+    filter.gender = req.query.gender;
+  }
+  if (req.query.color && req.query.color.trim() !== "") {
     filter.color = { $regex: req.query.color, $options: "i" };
   }
-
-  // Filter by category
-  if (req.query.category_id) filter.category_id = req.query.category_id;
-  if (req.query.subCategory_id)
+  if (req.query.category_id && req.query.category_id.trim() !== "") {
+    filter.category_id = req.query.category_id;
+  }
+  if (req.query.subCategory_id && req.query.subCategory_id.trim() !== "") {
     filter.subCategory_id = req.query.subCategory_id;
-
+  }
+  // Optional: filter by location if present and not empty
+  if (req.query.location && req.query.location.trim() !== "") {
+    filter.location = { $regex: req.query.location, $options: "i" };
+  }
   // Filter by price range
-  if (req.query.minPrice || req.query.maxPrice) {
+  if (
+    (req.query.minPrice && req.query.minPrice !== "") ||
+    (req.query.maxPrice && req.query.maxPrice !== "")
+  ) {
     filter.price = {};
-    if (req.query.minPrice) filter.price.$gte = Number(req.query.minPrice);
-    if (req.query.maxPrice) filter.price.$lte = Number(req.query.maxPrice);
+    if (req.query.minPrice && req.query.minPrice !== "")
+      filter.price.$gte = Number(req.query.minPrice);
+    if (req.query.maxPrice && req.query.maxPrice !== "")
+      filter.price.$lte = Number(req.query.maxPrice);
   }
 
   const [products, total] = await Promise.all([
@@ -272,38 +260,6 @@ export const getProductById = asyncHandler(async (req, res) => {
       .json(new ApiResponse(404, null, "Product not found"));
 
   res.json(new ApiResponse(200, product, "Fetched product"));
-});
-
-/* ==================================================
-   CREATE  — POST /api/v1/products
-   ================================================== */
-export const createProduct = asyncHandler(async (req, res) => {
-  await validateCategories(req.body);
-  const product = await Product.create(req.body);
-  res
-    .status(201)
-    .json(new ApiResponse(201, product, "Product created successfully"));
-});
-
-/* ==================================================
-   UPDATE  — PUT /api/v1/products/:productId
-   ================================================== */
-export const updateProduct = asyncHandler(async (req, res) => {
-  const { productId } = req.params;
-  if (req.body.category_id || req.body.subCategory_id) {
-    await validateCategories({
-      category_id: req.body.category_id,
-      subCategory_id: req.body.subCategory_id,
-    });
-  }
-  const updated = await Product.findByIdAndUpdate(productId, req.body, {
-    new: true,
-  });
-  if (!updated)
-    return res
-      .status(404)
-      .json(new ApiResponse(404, null, "Product not found"));
-  res.json(new ApiResponse(200, updated, "Product updated successfully"));
 });
 
 /* ==================================================

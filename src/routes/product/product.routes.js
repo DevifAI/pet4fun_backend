@@ -4,11 +4,8 @@ import {
   getProductsByCategory,
   getProductsByCategorySlug,
   updateProductInCategory,
-  deleteProductInCategory,
   getAllProducts,
   getProductById,
-  createProduct,
-  updateProduct,
   deleteProduct,
 } from "../../controllers/product/product.controller.js";
 
@@ -22,16 +19,10 @@ router.patch(
   "/categories/:categoryId/products/:productId",
   updateProductInCategory
 );
-router.delete(
-  "/categories/:categoryId/products/:productId",
-  deleteProductInCategory
-);
 
 // General product routes
 router.get("/", getAllProducts);
 router.get("/:productId", getProductById);
-router.post("/", createProduct);
-router.patch("/:productId", updateProduct);
-router.delete("/:productId", deleteProduct);
+router.delete("/delete/:productId", deleteProduct);
 
 export default router;

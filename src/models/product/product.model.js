@@ -1,59 +1,51 @@
 import mongoose from "mongoose";
-
-const healthInsuranceSchema = new mongoose.Schema(
-  {
-    planName: String,
-    coverageMths: Number,
-    expiresAt: Date,
-  },
-  { _id: false }
-);
-
-const vaccinationSchema = new mongoose.Schema(
-  {
-    vaccineName: String,
-    date: Date,
-    nextDueDate: Date,
-  },
-  { _id: false }
-);
+import pharmacyProductSchema from "./pharmacy.model.js";
+import vaccinationSchema from "./vaccination.model.js";
+import healthInsuranceSchema from "./healthInsurance.model.js";
 
 const productSchema = new mongoose.Schema(
   {
     name: { type: String, required: true },
     description: String,
-    type: {
-      type: String,
-      enum: ["pet", "food", "toy", "care", "accessory"],
-      required: true,
-    },
     category_id: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Category",
       required: true,
       index: true,
     },
-    subCategory_id: { type: mongoose.Schema.Types.ObjectId, ref: "Category" },
-    tags: { type: [String], default: [] },
-    relatedProducts: [{ type: mongoose.Schema.Types.ObjectId, ref: "Product" }],
+    subCategory_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "SubCategory",
+      required: true,
+      index: true,
+    },
+
     price: { type: Number, required: true },
     discountPrice: Number,
     stock: { type: Number, default: 0 },
     size: String,
-    images: { type: [String], default: [] },
-    petType: {
-      type: String,
-      enum: ["dog", "cat", "rabbit", "bird", "fish", "other"],
-    },
-    breed: String,
-    dob: Date,
     color: String,
+    images: { type: [String], default: [] },
+
+    breed: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Breed",
+    },
+    dob: Date,
     gender: { type: String, enum: ["male", "female"] },
     availableFrom: Date,
-    healthInsurance: healthInsuranceSchema,
+
     isVaccinated: { type: Boolean, default: false },
     vaccinations: { type: [vaccinationSchema], default: [] },
-    // status: { type: String, enum: ["active", "inactive"], default: "active" }, // optional
+    healthInsurance: healthInsuranceSchema,
+
+    pharmacyDetails: pharmacyProductSchema,
+
+    relatedProducts: [{ type: mongoose.Schema.Types.ObjectId, ref: "Product" }],
+    tags: { type: [String], default: [] },
+
+    status: { type: Boolean, default: true },
+    isDeleted: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

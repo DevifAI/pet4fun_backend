@@ -2,11 +2,16 @@ import mongoose from "mongoose";
 import Category from "../../models/productCategory/category.model.js";
 import ApiResponse from "../../utils/ApiResponse.js";
 import { asyncHandler } from "../../utils/asyncHandler.js";
+import handleMongoErrors from "../../utils/mongooseError.js";
+// import { categoryQueue } from "../../queues/category.queue.js";
+import Product from "../../models/product/product.model.js";
+import SubCategory from "../../models/productCategory/subcategory.model.js";
+import { checkIfProductsUsedInOrderOrCart } from "../../handler/checkOrder&Cart.js";
 
 // Create Category
 export const createCategory = asyncHandler(async (req, res) => {
   try {
-    const { name, slug, parentCategory } = req.body;
+    const { name, slug } = req.body;
 
     if (!name) {
       return res
@@ -14,12 +19,10 @@ export const createCategory = asyncHandler(async (req, res) => {
         .json(new ApiResponse(400, null, "Category name is required"));
     }
 
-    // Auto-generate slug from name if not provided
     const finalSlug =
       slug?.trim().toLowerCase().replace(/\s+/g, "-") ||
       name.trim().toLowerCase().replace(/\s+/g, "-");
 
-    // Check for existing slug
     const existing = await Category.findOne({ slug: finalSlug });
     if (existing) {
       return res
@@ -29,27 +32,9 @@ export const createCategory = asyncHandler(async (req, res) => {
         );
     }
 
-    // Validate parentCategory if provided
-    if (parentCategory) {
-      if (!mongoose.Types.ObjectId.isValid(parentCategory)) {
-        return res
-          .status(400)
-          .json(new ApiResponse(400, null, "Invalid parentCategory ID"));
-      }
-
-      const parentExists = await Category.findById(parentCategory);
-      if (!parentExists) {
-        return res
-          .status(404)
-          .json(new ApiResponse(404, null, "Parent category not found"));
-      }
-    }
-
-    // Create category
     const category = await Category.create({
       name,
       slug: finalSlug,
-      parentCategory: parentCategory || null,
     });
 
     return res
@@ -57,95 +42,86 @@ export const createCategory = asyncHandler(async (req, res) => {
       .json(new ApiResponse(201, category, "Category created successfully"));
   } catch (error) {
     console.error("Create Category Error:", error);
-    return res
-      .status(500)
-      .json(new ApiResponse(500, null, "Internal Server Error"));
+    return handleMongoErrors(error, res);
   }
 });
 
-// Get All Categories
+// Get All Categories (excluding soft-deleted)
 export const getAllCategories = asyncHandler(async (req, res) => {
   try {
-    const categories = await Category.find().populate("parentCategory");
+    const categories = await Category.find({ isDeleted: { $ne: true } });
     return res.json(new ApiResponse(200, categories, "Fetched all categories"));
   } catch (error) {
     console.error("Get All Categories Error:", error);
-    return res
-      .status(500)
-      .json(new ApiResponse(500, null, "Internal Server Error"));
+    return handleMongoErrors(error, res);
   }
 });
 
-// Get Single Category
+// Get Single Category by ID (with ID check)
 export const getCategoryById = asyncHandler(async (req, res) => {
   try {
-    const category = await Category.findById(req.params.id).populate(
-      "parentCategory"
-    );
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res
+        .status(400)
+        .json(new ApiResponse(400, null, "Invalid category ID"));
+    }
+
+    const category = await Category.findOne({
+      _id: id,
+      isDeleted: { $ne: true },
+    });
+
     if (!category) {
       return res
         .status(404)
         .json(new ApiResponse(404, null, "Category not found"));
     }
+
     return res.json(new ApiResponse(200, category));
   } catch (error) {
     console.error("Get Category By ID Error:", error);
-    return res
-      .status(500)
-      .json(new ApiResponse(500, null, "Internal Server Error"));
-  }
-});
-
-// Get Only Parent Categories
-export const getParentCategories = asyncHandler(async (req, res) => {
-  try {
-    const parents = await Category.find({ parentCategory: null });
-    return res.json(new ApiResponse(200, parents, "Fetched parent categories"));
-  } catch (error) {
-    console.error("Get Parent Categories Error:", error);
-    return res
-      .status(500)
-      .json(new ApiResponse(500, null, "Internal Server Error"));
-  }
-});
-
-// Get Only Child Categories
-export const getChildCategories = asyncHandler(async (req, res) => {
-  try {
-    const children = await Category.find({
-      parentCategory: { $ne: null },
-    }).populate("parentCategory");
-    return res.json(new ApiResponse(200, children, "Fetched child categories"));
-  } catch (error) {
-    console.error("Get Child Categories Error:", error);
-    return res
-      .status(500)
-      .json(new ApiResponse(500, null, "Internal Server Error"));
-  }
-});
-
-// Get Children of a Specific Category
-export const getChildrenByParentId = asyncHandler(async (req, res) => {
-  try {
-    const { parentId } = req.params;
-    const children = await Category.find({ parentCategory: parentId });
-    return res.json(
-      new ApiResponse(200, children, "Fetched children of the category")
-    );
-  } catch (error) {
-    console.error("Get Children By Parent ID Error:", error);
-    return res
-      .status(500)
-      .json(new ApiResponse(500, null, "Internal Server Error"));
+    return handleMongoErrors(error, res);
   }
 });
 
 // Update Category
 export const updateCategory = asyncHandler(async (req, res) => {
   try {
-    const updated = await Category.findByIdAndUpdate(req.params.id, req.body, {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res
+        .status(400)
+        .json(new ApiResponse(400, null, "Invalid category ID"));
+    }
+
+    const { name, slug } = req.body;
+    let updateData = { ...req.body };
+
+    if (name) {
+      updateData.slug = slug
+        ? slug.trim().toLowerCase().replace(/\s+/g, "-")
+        : name.trim().toLowerCase().replace(/\s+/g, "-");
+    }
+
+    const existing = await Category.findOne({
+      slug: updateData.slug,
+      _id: { $ne: id },
+    });
+    if (existing) {
+      return res
+        .status(409)
+        .json(
+          new ApiResponse(409, null, "Category with this slug already exists")
+        );
+    }
+
+    const updated = await Category.findByIdAndUpdate(id, updateData, {
       new: true,
-    }).populate("parentCategory");
+      runValidators: true,
+    });
 
     if (!updated) {
       return res
@@ -158,47 +134,125 @@ export const updateCategory = asyncHandler(async (req, res) => {
     );
   } catch (error) {
     console.error("Update Category Error:", error);
-    return res
-      .status(500)
-      .json(new ApiResponse(500, null, "Internal Server Error"));
+    return handleMongoErrors(error, res);
   }
 });
 
-// Delete Category
-export const deleteCategory = asyncHandler(async (req, res) => {
+// Restore Soft-Deleted Category
+export const restoreCategory = asyncHandler(async (req, res) => {
+  const { id: categoryId } = req.params;
+
+  if (!mongoose.Types.ObjectId.isValid(categoryId)) {
+    return res
+      .status(400)
+      .json(new ApiResponse(400, null, "Invalid category ID"));
+  }
+
   try {
-    const categoryId = req.params.id;
+    const category = await Category.findById(categoryId);
 
-    // Find all child categories that reference this as parent
-    const childCategories = await Category.find({ parentCategory: categoryId });
-
-    if (childCategories.length > 0) {
-      return res
-        .status(400)
-        .json(
-          new ApiResponse(
-            400,
-            childCategories,
-            "Cannot delete category: child categories exist"
-          )
-        );
-    }
-
-    const deleted = await Category.findByIdAndDelete(categoryId);
-
-    if (!deleted) {
+    if (!category) {
       return res
         .status(404)
         .json(new ApiResponse(404, null, "Category not found"));
     }
 
+    if (!category.isDeleted) {
+      return res.json(
+        new ApiResponse(200, category, "Category is already active")
+      );
+    }
+
+    await Promise.all([
+      SubCategory.updateMany(
+        { parentCategory: categoryId },
+        { $set: { isDeleted: false } }
+      ),
+      Product.updateMany(
+        { category: categoryId },
+        { $set: { isDeleted: false, status: true } }
+      ),
+    ]);
+
+    category.isDeleted = false;
+    await category.save();
+
     return res.json(
-      new ApiResponse(200, null, "Category deleted successfully")
+      new ApiResponse(200, category, "Category successfully restored")
+    );
+  } catch (error) {
+    console.error("Restore Category Error:", error);
+    return handleMongoErrors(error, res);
+  }
+});
+
+// Delete Category (soft or hard based on client input)
+export const deleteCategory = asyncHandler(async (req, res) => {
+  const categoryId = req.params.id;
+  const { mode = "soft" } = req.query;
+
+  if (!mongoose.Types.ObjectId.isValid(categoryId)) {
+    return res
+      .status(400)
+      .json(new ApiResponse(400, null, "Invalid category ID"));
+  }
+
+  const category = await Category.findById(categoryId);
+  if (!category) {
+    return res
+      .status(404)
+      .json(new ApiResponse(404, null, "Category not found"));
+  }
+
+  try {
+    const products = await Product.find({ category: categoryId }).select("_id");
+    const productIds = products.map((p) => p._id);
+
+    if (mode === "hard") {
+      const { used } = await checkIfProductsUsedInOrderOrCart(productIds);
+
+      if (used) {
+        return res
+          .status(400)
+          .json(
+            new ApiResponse(
+              400,
+              null,
+              "Cannot hard delete category — products are in active orders or carts"
+            )
+          );
+      }
+
+      await Promise.all([
+        SubCategory.deleteMany({ parentCategory: categoryId }),
+        Product.deleteMany({ category: categoryId }),
+        Category.findByIdAndDelete(categoryId),
+      ]);
+    } else {
+      category.isDeleted = true;
+      await category.save();
+
+      await Promise.all([
+        SubCategory.updateMany(
+          { parentCategory: categoryId },
+          { $set: { isDeleted: true } }
+        ),
+        Product.updateMany(
+          { category: categoryId },
+          { $set: { isDeleted: true, status: false } }
+        ),
+      ]);
+    }
+
+    return res.json(
+      new ApiResponse(
+        200,
+        null,
+        `${mode} delete successful, processed in background`
+      )
     );
   } catch (error) {
     console.error("Delete Category Error:", error);
-    return res
-      .status(500)
-      .json(new ApiResponse(500, null, "Internal Server Error"));
+    return handleMongoErrors(error, res);
   }
 });

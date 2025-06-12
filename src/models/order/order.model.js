@@ -1,22 +1,16 @@
 import mongoose from "mongoose";
+import orderItemSchema from './orderItem.model.js';
+import addressSchema from './address.model.js';
 
-// models/Order.js
-const orderItemSchema = new mongoose.Schema(
-  {
-    product_id: { type: mongoose.Schema.Types.ObjectId, ref: "Product" },
-    quantity: Number,
-    price: Number,
-  },
-  { _id: false }
-);
 
+// Main Order Schema
 const orderSchema = new mongoose.Schema(
   {
     user_id: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     orderItems: [orderItemSchema],
     totalAmount: Number,
     shippingAddress: addressSchema,
-    paymentMethod: { type: String, enum: ["COD", "ONLINE"] },
+    paymentMethod: { type: String, enum: ["COD", "ONLINE"], required: true },
     paymentStatus: {
       type: String,
       enum: ["Pending", "Paid"],
