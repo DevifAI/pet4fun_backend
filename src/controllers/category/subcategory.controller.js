@@ -6,37 +6,64 @@ import { asyncHandler } from "../../utils/asyncHandler.js";
 import handleMongoErrors from "../../utils/mongooseError.js";
 import Product from "../../models/product/product.model.js";
 // import { subCategoryQueue } from "../../queues/subCategory.queue.js";
-import { checkIfProductsUsedInOrderOrCart } from './../../handler/checkOrder&Cart.js';
+import { checkIfProductsUsedInOrderOrCart } from "./../../handler/checkOrder&Cart.js";
 
 // Create SubCategory (same as before)
 export const createSubCategory = asyncHandler(async (req, res) => {
   try {
-    const { name, parentCategory, attributes = {} } = req.body;
+    const { name, parentCategory, slug, attributes = {} } = req.body;
 
     if (!name || !parentCategory) {
       return res
         .status(400)
-        .json(new ApiResponse(400, null, "Name and parentCategory required"));
+        .json(
+          new ApiResponse(400, null, "Name and parentCategory is required")
+        );
     }
 
+    // ✅ Validate category ID
     if (!mongoose.Types.ObjectId.isValid(parentCategory)) {
       return res
         .status(400)
-        .json(new ApiResponse(400, null, "Invalid parentCategory ID"));
+        .json(
+          new ApiResponse(400, null, `Invalid Category ID: ${parentCategory}`)
+        );
     }
 
-    const isValidParent = await Category.findById(parentCategory);
-    if (!isValidParent || isValidParent.isDeleted) {
+    const exists = await Category.findById(parentCategory);
+    if (!exists || exists.isDeleted) {
       return res
         .status(404)
         .json(
-          new ApiResponse(404, null, "Parent category not found or deleted")
+          new ApiResponse(
+            404,
+            null,
+            `Category ${parentCategory} not found or deleted`
+          )
+        );
+    }
+
+    const finalSlug =
+      slug?.trim().toLowerCase().replace(/\s+/g, "-") ||
+      name.trim().toLowerCase().replace(/\s+/g, "-");
+
+    const existing = await SubCategory.findOne({ slug: finalSlug });
+    if (existing) {
+      return res
+        .status(409)
+        .json(
+          new ApiResponse(
+            409,
+            null,
+            "SubCategory with this slug already exists"
+          )
         );
     }
 
     const subCategory = await SubCategory.create({
       name,
-      parentCategory,
+      slug: finalSlug,
+      parentSubCategory: parentCategory, // ✅ Use the correct field from schema
       attributes,
     });
 
@@ -90,14 +117,17 @@ export const getSubCategoriesByParent = asyncHandler(async (req, res) => {
 // Update SubCategory
 export const updateSubCategory = asyncHandler(async (req, res) => {
   try {
-    if (req.body.parentCategory) {
-      if (!mongoose.Types.ObjectId.isValid(req.body.parentCategory)) {
+    const { name, slug, parentCategory } = req.body;
+
+    // ✅ Validate parentCategory if provided
+    if (parentCategory) {
+      if (!mongoose.Types.ObjectId.isValid(parentCategory)) {
         return res
           .status(400)
           .json(new ApiResponse(400, null, "Invalid parentCategory ID"));
       }
 
-      const parentExists = await Category.findById(req.body.parentCategory);
+      const parentExists = await Category.findById(parentCategory);
       if (!parentExists || parentExists.isDeleted) {
         return res
           .status(404)
@@ -107,6 +137,42 @@ export const updateSubCategory = asyncHandler(async (req, res) => {
       }
     }
 
+    // ✅ Fetch existing SubCategory
+    const existingSubCategory = await SubCategory.findById(req.params.id);
+    if (!existingSubCategory) {
+      return res
+        .status(404)
+        .json(new ApiResponse(404, null, "SubCategory not found"));
+    }
+
+    // ✅ Generate slug if name is updated
+    if (name) {
+      const finalSlug =
+        slug?.trim().toLowerCase().replace(/\s+/g, "-") ||
+        name.trim().toLowerCase().replace(/\s+/g, "-");
+
+      // ✅ Check if slug is already taken
+      const slugExists = await SubCategory.findOne({
+        slug: finalSlug,
+        _id: { $ne: req.params.id },
+      });
+
+      if (slugExists) {
+        return res
+          .status(409)
+          .json(
+            new ApiResponse(
+              409,
+              null,
+              "Slug already exists for another subcategory"
+            )
+          );
+      }
+
+      req.body.slug = finalSlug;
+    }
+
+    // ✅ Perform update
     const updated = await SubCategory.findByIdAndUpdate(
       req.params.id,
       req.body,
@@ -115,12 +181,6 @@ export const updateSubCategory = asyncHandler(async (req, res) => {
         runValidators: true,
       }
     ).populate("parentCategory");
-
-    if (!updated) {
-      return res
-        .status(404)
-        .json(new ApiResponse(404, null, "SubCategory not found"));
-    }
 
     return res.json(
       new ApiResponse(200, updated, "SubCategory updated successfully")

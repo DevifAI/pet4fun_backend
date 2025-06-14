@@ -4,6 +4,7 @@ import {
   deleteCategory,
   getAllCategories,
   getCategoryById,
+  getCategoryTree,
   restoreCategory,
   updateCategory,
 } from "../../controllers/category/category.controller.js";
@@ -15,6 +16,10 @@ router.post("/create", createCategory);
 
 // Get all categories (excluding soft-deleted ones)
 router.get("/", getAllCategories);
+
+
+// Get category tree structure
+router.get("/tree", getCategoryTree);
 
 // Get a single category by ID
 router.get("/:id", getCategoryById);

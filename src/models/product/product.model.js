@@ -20,6 +20,12 @@ const productSchema = new mongoose.Schema(
       index: true,
     },
 
+    childSubCategory_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "ChildSubCategory", // this is your 3rd level
+      index: true,
+    },
+
     price: { type: Number, required: true },
     discountPrice: Number,
     stock: { type: Number, default: 0 },
