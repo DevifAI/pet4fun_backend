@@ -8,10 +8,10 @@ import Product from "../../models/product/product.model.js";
 // import { subCategoryQueue } from "../../queues/subCategory.queue.js";
 import { checkIfProductsUsedInOrderOrCart } from "./../../handler/checkOrder&Cart.js";
 
-// Create SubCategory (same as before)
+// Create SubCategory
 export const createSubCategory = asyncHandler(async (req, res) => {
   try {
-    const { name, parentCategory, slug, attributes = {} } = req.body;
+    const { name, parentCategory, attributes = {} } = req.body;
 
     if (!name || !parentCategory) {
       return res
@@ -21,7 +21,7 @@ export const createSubCategory = asyncHandler(async (req, res) => {
         );
     }
 
-    // ✅ Validate category ID
+    // Validate ObjectId
     if (!mongoose.Types.ObjectId.isValid(parentCategory)) {
       return res
         .status(400)
@@ -30,8 +30,9 @@ export const createSubCategory = asyncHandler(async (req, res) => {
         );
     }
 
-    const exists = await Category.findById(parentCategory);
-    if (!exists || exists.isDeleted) {
+    // Get parent category
+    const parent = await Category.findById(parentCategory);
+    if (!parent || parent.isDeleted) {
       return res
         .status(404)
         .json(
@@ -43,11 +44,20 @@ export const createSubCategory = asyncHandler(async (req, res) => {
         );
     }
 
-    const finalSlug =
-      slug?.trim().toLowerCase().replace(/\s+/g, "-") ||
-      name.trim().toLowerCase().replace(/\s+/g, "-");
+    // Generate compound slug (e.g., "dog-pharmacy")
+    const formattedParentName = parent.name
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, "-");
+    const formattedName = name.trim().toLowerCase().replace(/\s+/g, "-");
+    const finalSlug = `${formattedParentName}-${formattedName}`;
 
-    const existing = await SubCategory.findOne({ slug: finalSlug });
+    // Check for duplicate slug under same parent category
+    const existing = await SubCategory.findOne({
+      slug: finalSlug,
+      parentSubCategory: parentCategory,
+    });
+
     if (existing) {
       return res
         .status(409)
@@ -55,15 +65,16 @@ export const createSubCategory = asyncHandler(async (req, res) => {
           new ApiResponse(
             409,
             null,
-            "SubCategory with this slug already exists"
+            `SubCategory with name "${name}" already exists under "${parent.name}"`
           )
         );
     }
 
+    // Create SubCategory
     const subCategory = await SubCategory.create({
       name,
       slug: finalSlug,
-      parentSubCategory: parentCategory, // ✅ Use the correct field from schema
+      parentSubCategory: parentCategory,
       attributes,
     });
 

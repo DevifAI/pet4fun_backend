@@ -10,7 +10,7 @@ import { checkIfProductsUsedInOrderOrCart } from "../../handler/checkOrder&Cart.
 // Create a new child sub-category
 export const createChildSubCategory = asyncHandler(async (req, res) => {
   try {
-    const { name, parentSubCategories = [], slug, attributes = {} } = req.body;
+    const { name, parentSubCategories = [], attributes = {} } = req.body;
 
     if (!name || !parentSubCategories.length) {
       return res
@@ -20,7 +20,9 @@ export const createChildSubCategory = asyncHandler(async (req, res) => {
         );
     }
 
-    // Validate each parentSubCategory ID
+    const parentNames = [];
+
+    // Validate each parentSubCategory ID & get name
     for (const subCatId of parentSubCategories) {
       if (!mongoose.Types.ObjectId.isValid(subCatId)) {
         return res
@@ -42,12 +44,15 @@ export const createChildSubCategory = asyncHandler(async (req, res) => {
             )
           );
       }
+
+      parentNames.push(exists.name.trim().toLowerCase().replace(/\s+/g, "-"));
     }
 
-    const finalSlug =
-      slug?.trim().toLowerCase().replace(/\s+/g, "-") ||
-      name.trim().toLowerCase().replace(/\s+/g, "-");
+    // ✅ Build compound slug: e.g., "dog-pharmacy-deworming"
+    const formattedName = name.trim().toLowerCase().replace(/\s+/g, "-");
+    const finalSlug = [...parentNames, formattedName].join("-");
 
+    // Check for existing slug
     const existing = await ChildSubCategory.findOne({ slug: finalSlug });
     if (existing) {
       return res
@@ -56,7 +61,7 @@ export const createChildSubCategory = asyncHandler(async (req, res) => {
           new ApiResponse(
             409,
             null,
-            "Child SubCategory with this slug already exists"
+            `ChildSubCategory "${name}" already exists under those subcategories`
           )
         );
     }

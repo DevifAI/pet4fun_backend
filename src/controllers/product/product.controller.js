@@ -3,30 +3,37 @@ import Product from "../../models/product/product.model.js";
 import Category from "../../models/productCategory/category.model.js";
 import ApiResponse from "../../utils/ApiResponse.js";
 import { asyncHandler } from "../../utils/asyncHandler.js";
+import SubCategory from "../../models/productCategory/subcategory.model.js";
+import ChildSubCategory from "../../models/productCategory/childSubCategory.model.js";
 
-/* -------------------------------------------------- *
- * Helper: validate & return category + subCategory   *
- * -------------------------------------------------- */
-const validateCategories = async ({ category_id, subCategory_id }) => {
-  // Make sure both IDs are valid ObjectIds
-  if (!mongoose.Types.ObjectId.isValid(category_id))
+const validateCategories = async ({
+  category_id,
+  subCategory_id,
+  childSubCategory_id,
+}) => {
+  if (!mongoose.Types.ObjectId.isValid(category_id)) {
     throw new ApiResponse(400, null, "Invalid category_id");
+  }
 
   const category = await Category.findById(category_id);
-  if (!category) throw new ApiResponse(404, null, "Category not found");
+  if (!category) {
+    throw new ApiResponse(404, null, "Category not found");
+  }
 
+  // Validate subCategory
   if (subCategory_id) {
-    if (!mongoose.Types.ObjectId.isValid(subCategory_id))
+    if (!mongoose.Types.ObjectId.isValid(subCategory_id)) {
       throw new ApiResponse(400, null, "Invalid subCategory_id");
+    }
 
-    const subCategory = await Category.findById(subCategory_id);
-    if (!subCategory)
+    const subCategory = await SubCategory.findById(subCategory_id);
+    if (!subCategory) {
       throw new ApiResponse(404, null, "Sub-category not found");
+    }
 
-    // Ensure sub-category really belongs to the parent
     if (
-      !subCategory.parentCategory ||
-      !subCategory.parentCategory.equals(category._id)
+      !subCategory.parentSubCategory ||
+      !subCategory.parentSubCategory.equals(category._id)
     ) {
       throw new ApiResponse(
         400,
@@ -34,26 +41,52 @@ const validateCategories = async ({ category_id, subCategory_id }) => {
         "subCategory_id does not belong to the supplied category_id"
       );
     }
+
+    // Validate childSubCategory
+    if (childSubCategory_id) {
+      if (!mongoose.Types.ObjectId.isValid(childSubCategory_id)) {
+        throw new ApiResponse(400, null, "Invalid childSubCategory_id");
+      }
+
+      const childSubCategory = await ChildSubCategory.findById(
+        childSubCategory_id
+      );
+
+      if (!childSubCategory) {
+        throw new ApiResponse(404, null, "Child sub-category not found");
+      }
+
+      const isMatch = childSubCategory.parentSubCategories.some((id) =>
+        id.equals(subCategory._id)
+      );
+
+      if (!isMatch) {
+        throw new ApiResponse(
+          400,
+          null,
+          "childSubCategory_id does not belong to the supplied subCategory_id"
+        );
+      }
+    }
   }
+
   return true;
 };
 
-/* ==================================================
-   CREATE  — POST /api/v1/categories/:categoryId/products
-   ================================================== */
 export const createProductInCategory = asyncHandler(async (req, res) => {
   try {
-    // Inject the categoryId param into the body (allows nested route)
-    req.body.category_id = req.params.categoryId;
-
     await validateCategories(req.body);
+
     const product = await Product.create(req.body);
 
     res
       .status(201)
       .json(new ApiResponse(201, product, "Product created successfully"));
   } catch (err) {
-    if (err instanceof ApiResponse) return res.status(err.statusCode).json(err);
+    if (err instanceof ApiResponse) {
+      return res.status(err.statusCode).json(err);
+    }
+
     console.error("Create Product Error:", err);
     res
       .status(500)
@@ -61,11 +94,6 @@ export const createProductInCategory = asyncHandler(async (req, res) => {
   }
 });
 
-/* ==================================================
-   READ  — GET products by a single category (and its children)
-   GET /api/v1/categories/:categoryId/products
-   query ?deep=true  ➜ include all descendant sub-categories
-   ================================================== */
 export const getProductsByCategory = asyncHandler(async (req, res) => {
   const { categoryId } = req.params;
   const { deep } = req.query;
@@ -105,10 +133,6 @@ export const getProductsByCategory = asyncHandler(async (req, res) => {
   res.json(new ApiResponse(200, products, "Fetched products"));
 });
 
-/* ==================================================
-   READ  — GET products by category slug
-   GET /api/v1/categories/slug/:slug/products
-   ================================================== */
 export const getProductsByCategorySlug = asyncHandler(async (req, res) => {
   const { slug } = req.params;
   const category = await Category.findOne({ slug });
@@ -123,10 +147,6 @@ export const getProductsByCategorySlug = asyncHandler(async (req, res) => {
   return getProductsByCategory(req, res);
 });
 
-/* ==================================================
-   UPDATE  (same validation, but keeps existing category unless changed)
-   PUT /api/v1/categories/:categoryId/products/:productId
-   ================================================== */
 export const updateProductInCategory = asyncHandler(async (req, res) => {
   try {
     // Ensure product actually belongs to the category in the URL
@@ -163,10 +183,6 @@ export const updateProductInCategory = asyncHandler(async (req, res) => {
   }
 });
 
-/* ==================================================
-   READ  — GET all products (with optional pagination & filtering)
-   GET /api/v1/products?limit=10&page=1&search=dog&type=pet&minPrice=2000&maxPrice=5000&petType=dog&breed=bull%20dog&gender=male&color=white&category_id=...
-   ================================================== */
 export const getAllProducts = asyncHandler(async (req, res) => {
   const limit = parseInt(req.query.limit) || 20;
   const page = parseInt(req.query.page) || 1;
@@ -234,10 +250,145 @@ export const getAllProducts = asyncHandler(async (req, res) => {
   );
 });
 
-/* ==================================================
-   READ  — GET product by ID (with related products)
-   GET /api/v1/products/:productId
-   ================================================== */
+export const getFilteredProducts = asyncHandler(async (req, res) => {
+  try {
+    const {
+      categorySlug,
+      subCategorySlug,
+      childSubCategorySlug,
+      minPrice,
+      maxPrice,
+      brand,
+      type,
+      usage,
+      page = 1,
+      limit = 10,
+    } = req.query;
+
+    const match = { isDeleted: false, status: true };
+
+    // Resolve category slugs to IDs
+    const category = categorySlug
+      ? await Category.findOne({ slug: categorySlug, isDeleted: false })
+      : null;
+    if (category) match.category_id = category._id;
+
+    const subCategory = subCategorySlug
+      ? await SubCategory.findOne({ slug: subCategorySlug, isDeleted: false })
+      : null;
+    if (subCategory) match.subCategory_id = subCategory._id;
+
+    const childSubCategory = childSubCategorySlug
+      ? await ChildSubCategory.findOne({
+          slug: childSubCategorySlug,
+          isDeleted: false,
+        })
+      : null;
+    if (childSubCategory) match.childSubCategory_id = childSubCategory._id;
+
+    // Price filter
+    if (minPrice || maxPrice) {
+      match.discountPrice = {};
+      if (minPrice) match.discountPrice.$gte = Number(minPrice);
+      if (maxPrice) match.discountPrice.$lte = Number(maxPrice);
+    }
+
+    // Additional filters
+    if (brand) match["filterAttributes.brand"] = brand;
+    if (type) match["filterAttributes.type"] = type;
+    if (usage) match["filterAttributes.usage"] = usage;
+
+    const skip = (Number(page) - 1) * Number(limit);
+
+    // Aggregation pipeline
+    const aggregationPipeline = [
+      { $match: match },
+
+      {
+        $facet: {
+          products: [
+            { $sort: { createdAt: -1 } },
+            { $skip: skip },
+            { $limit: Number(limit) },
+          ],
+
+          totalCount: [{ $count: "count" }],
+
+          filterCounts: [
+            {
+              $group: {
+                _id: null,
+                brands: { $addToSet: "$filterAttributes.brand" },
+                types: { $addToSet: "$filterAttributes.type" },
+                usages: { $addToSet: "$filterAttributes.usage" },
+                species: { $addToSet: "$filterAttributes.species" },
+                minPrice: { $min: "$discountPrice" },
+                maxPrice: { $max: "$discountPrice" },
+              },
+            },
+          ],
+
+          brandBreakdown: [
+            {
+              $group: {
+                _id: "$filterAttributes.brand",
+                count: { $sum: 1 },
+              },
+            },
+          ],
+
+          speciesBreakdown: [
+            {
+              $group: {
+                _id: "$filterAttributes.species",
+                count: { $sum: 1 },
+              },
+            },
+          ],
+        },
+      },
+    ];
+
+    const result = await Product.aggregate(aggregationPipeline);
+
+    const {
+      products,
+      totalCount,
+      filterCounts,
+      brandBreakdown,
+      speciesBreakdown,
+    } = result[0];
+
+    const filters = {
+      brands: brandBreakdown.map((b) => ({ name: b._id, count: b.count })),
+      species: speciesBreakdown.map((s) => ({ name: s._id, count: s.count })),
+      types: filterCounts[0]?.types || [],
+      usages: filterCounts[0]?.usages || [],
+      price: {
+        min: filterCounts[0]?.minPrice || 0,
+        max: filterCounts[0]?.maxPrice || 0,
+      },
+    };
+
+    return res.status(200).json(
+      new ApiResponse(
+        200,
+        {
+          products,
+          total: totalCount[0]?.count || 0,
+          page: Number(page),
+          pages: Math.ceil((totalCount[0]?.count || 0) / limit),
+          filters,
+        },
+        "Filtered products with breakdown"
+      )
+    );
+  } catch (error) {
+    console.error("Filter API Error:", error);
+    return handleMongoErrors(error, res);
+  }
+});
+
 export const getProductById = asyncHandler(async (req, res) => {
   const { productId } = req.params;
 
@@ -262,9 +413,63 @@ export const getProductById = asyncHandler(async (req, res) => {
   res.json(new ApiResponse(200, product, "Fetched product"));
 });
 
-/* ==================================================
-   DELETE  — DELETE /api/v1/products/:productId
-   ================================================== */
+// Add this to your product.controller.js
+export const getRelatedProducts = asyncHandler(async (req, res) => {
+  try {
+    const { productId } = req.params;
+    const limit = parseInt(req.query.limit) || 4; // Default to 4 related products
+
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
+      return res
+        .status(400)
+        .json(new ApiResponse(400, null, "Invalid product ID"));
+    }
+
+    // First get the current product to determine relation criteria
+    const product = await Product.findById(productId).lean();
+    if (!product) {
+      return res
+        .status(404)
+        .json(new ApiResponse(404, null, "Product not found"));
+    }
+
+    // Find related products based on:
+    // 1. Same category
+    // 2. Same subcategory (if exists)
+    // 3. Similar tags (if exist)
+    // 4. Same filter attributes (like brand, type, etc.)
+    const relatedProducts = await Product.find({
+      _id: { $ne: product._id }, // Exclude current product
+      $or: [
+        { category_id: product.category_id },
+        { subCategory_id: product.subCategory_id },
+        { tags: { $in: product.tags || [] } },
+        ...(product.filterAttributes?.brand
+          ? [{ "filterAttributes.brand": product.filterAttributes.brand }]
+          : []),
+      ],
+      isDeleted: false,
+      status: true,
+    })
+      .limit(limit)
+      .populate("category_id subCategory_id")
+      .lean();
+
+    res.json(
+      new ApiResponse(
+        200,
+        { products: relatedProducts },
+        "Related products fetched"
+      )
+    );
+  } catch (error) {
+    console.error("Get Related Products Error:", error);
+    res
+      .status(500)
+      .json(new ApiResponse(500, null, "Failed to fetch related products"));
+  }
+});
+
 export const deleteProduct = asyncHandler(async (req, res) => {
   const { productId } = req.params;
   const deleted = await Product.findByIdAndDelete(productId);

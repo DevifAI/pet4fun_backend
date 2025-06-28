@@ -262,15 +262,15 @@ export const deleteCategory = asyncHandler(async (req, res) => {
 export const getCategoryTree = asyncHandler(async (req, res) => {
   try {
     const categories = await Category.find({ isDeleted: false })
-      .select("name")
+      .select("name slug") // include slug
       .lean();
 
     const subCategories = await SubCategory.find({ isDeleted: false })
-      .select("name parentSubCategory") // single parent category
+      .select("name slug parentSubCategory") // include slug
       .lean();
 
     const childSubCategories = await ChildSubCategory.find({ isDeleted: false })
-      .select("name parentSubCategories")
+      .select("name slug parentSubCategories") // include slug
       .lean();
 
     // Create tree
@@ -287,10 +287,24 @@ export const getCategoryTree = asyncHandler(async (req, res) => {
               (parentSubId) => parentSubId.toString() === sub._id.toString()
             )
           );
-          return { ...sub, childSubCategories: childs };
+          return {
+            _id: sub._id,
+            name: sub.name,
+            slug: sub.slug,
+            childSubCategories: childs.map((child) => ({
+              _id: child._id,
+              name: child.name,
+              slug: child.slug,
+            })),
+          };
         });
 
-      return { ...cat, subCategories: subs };
+      return {
+        _id: cat._id,
+        name: cat.name,
+        slug: cat.slug,
+        subCategories: subs,
+      };
     });
 
     return res

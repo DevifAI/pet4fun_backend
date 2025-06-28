@@ -7,23 +7,23 @@ const productSchema = new mongoose.Schema(
   {
     name: { type: String, required: true },
     description: String,
+
     category_id: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Category",
       required: true,
-      index: true,
+      index: true
     },
     subCategory_id: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "SubCategory",
       required: true,
-      index: true,
+      index: true
     },
-
     childSubCategory_id: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "ChildSubCategory", // this is your 3rd level
-      index: true,
+      ref: "ChildSubCategory",
+      index: true
     },
 
     price: { type: Number, required: true },
@@ -35,7 +35,7 @@ const productSchema = new mongoose.Schema(
 
     breed: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Breed",
+      ref: "Breed"
     },
     dob: Date,
     gender: { type: String, enum: ["male", "female"] },
@@ -45,13 +45,19 @@ const productSchema = new mongoose.Schema(
     vaccinations: { type: [vaccinationSchema], default: [] },
     healthInsurance: healthInsuranceSchema,
 
-    pharmacyDetails: pharmacyProductSchema,
+    pharmacyDetails: pharmacyProductSchema, // now enriched schema
 
     relatedProducts: [{ type: mongoose.Schema.Types.ObjectId, ref: "Product" }],
     tags: { type: [String], default: [] },
 
+    filterAttributes: {
+      type: Map,
+      of: String,
+      default: {}
+    },
+
     status: { type: Boolean, default: true },
-    isDeleted: { type: Boolean, default: false },
+    isDeleted: { type: Boolean, default: false }
   },
   { timestamps: true }
 );
