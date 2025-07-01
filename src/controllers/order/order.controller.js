@@ -9,38 +9,34 @@ export const createOrder = asyncHandler(async (req, res) => {
   const userId = req.user._id;
   const { shippingAddress, paymentMethod } = req.body;
 
-  // Step 1: Get cart for user
-  const cart = await Cart.findOne({ user_id: userId }).lean();
-  if (!cart || cart.items.length === 0) {
+  if (!shippingAddress || !paymentMethod) {
+    return res.status(400).json(new ApiResponse(400, null, "Shipping address and payment method are required"));
+  }
+
+  const cart = await Cart.findOne({ user_id: userId });
+  if (!cart || !cart.items || cart.items.length === 0) {
     return res.status(400).json(new ApiResponse(400, null, "Cart is empty"));
   }
 
-  // Step 2: Prepare orderItems with full product snapshot
   let totalAmount = 0;
+  const orderItems = [];
 
-  const orderItems = await Promise.all(
-    cart.items.map(async (item) => {
-      // Fetch product details
-      const product = await Product.findById(item.product_id).lean();
-      if (!product) throw new Error("Product not found");
+  for (const item of cart.items) {
+    const product = await Product.findById(item.product_id).lean();
+    if (!product) {
+      return res.status(404).json(new ApiResponse(404, null, `Product not found: ${item.product_id}`));
+    }
+    const { _id, createdAt, updatedAt, __v, ...cleanProduct } = product;
+    const subtotal = product.price * item.quantity;
+    totalAmount += subtotal;
+    orderItems.push({
+      product_id: item.product_id,
+      quantity: item.quantity,
+      productSnapshot: cleanProduct,
+    });
+  }
 
-      // Remove _id, timestamps, __v etc.
-      const { _id, createdAt, updatedAt, __v, ...cleanProduct } = product;
-
-      // Calculate subtotal
-      const subtotal = product.price * item.quantity;
-      totalAmount += subtotal;
-
-      // Return order item with full product snapshot
-      return {
-        product_id: item.product_id,
-        quantity: item.quantity,
-        productSnapshot: cleanProduct,
-      };
-    })
-  );
-
-  // Step 3: Create new order
+  // Optionally use session/transaction for atomicity if MongoDB supports it
   const newOrder = await Order.create({
     user_id: userId,
     orderItems,
@@ -49,19 +45,13 @@ export const createOrder = asyncHandler(async (req, res) => {
     paymentMethod,
   });
 
-  // Step 4: Clear cart after order is placed
   await Cart.deleteOne({ user_id: userId });
 
-  // Step 5: Respond success
   return res
     .status(201)
     .json(new ApiResponse(201, newOrder, "Order created successfully"));
 });
 
-/* ==================================================
-   GET all orders for current user
-   GET /api/v1/orders
-   ================================================== */
 export const getMyOrders = asyncHandler(async (req, res) => {
   const orders = await Order.find({ user_id: req.user._id }).sort({
     createdAt: -1,
@@ -69,10 +59,6 @@ export const getMyOrders = asyncHandler(async (req, res) => {
   res.json(new ApiResponse(200, orders, "Fetched your orders"));
 });
 
-/* ==================================================
-   GET single order by ID (user can only access own order)
-   GET /api/v1/orders/:orderId
-   ================================================== */
 export const getOrderById = asyncHandler(async (req, res) => {
   const { orderId } = req.params;
   if (!mongoose.Types.ObjectId.isValid(orderId))
@@ -85,16 +71,16 @@ export const getOrderById = asyncHandler(async (req, res) => {
   res.json(new ApiResponse(200, order, "Fetched order"));
 });
 
-/* ==================================================
-   UPDATE order status (admin only)
-   PATCH /api/v1/orders/:orderId/status
-   Body: { orderStatus }
-   ================================================== */
 export const updateOrderStatus = asyncHandler(async (req, res) => {
   const { orderId } = req.params;
   const { orderStatus } = req.body;
   if (!mongoose.Types.ObjectId.isValid(orderId))
     return res.status(400).json(new ApiResponse(400, null, "Invalid order ID"));
+
+  const validStatuses = ["Pending", "Processing", "Shipped", "Delivered", "Cancelled"];
+  if (!orderStatus || !validStatuses.includes(orderStatus)) {
+    return res.status(400).json(new ApiResponse(400, null, "Invalid order status"));
+  }
 
   const order = await Order.findById(orderId);
   if (!order)
@@ -106,16 +92,11 @@ export const updateOrderStatus = asyncHandler(async (req, res) => {
   res.json(new ApiResponse(200, order, "Order status updated"));
 });
 
-/* ==================================================
-   DELETE order (user can only delete own order if not delivered)
-   DELETE /api/v1/orders/:orderId
-   ================================================== */
 export const deleteOrder = asyncHandler(async (req, res) => {
   const { orderId } = req.params;
   if (!mongoose.Types.ObjectId.isValid(orderId))
     return res.status(400).json(new ApiResponse(400, null, "Invalid order ID"));
 
-  // Only allow user to delete their own order if not delivered
   const order = await Order.findOne({ _id: orderId, user_id: req.user._id });
   if (!order)
     return res.status(404).json(new ApiResponse(404, null, "Order not found"));

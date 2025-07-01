@@ -4,10 +4,6 @@ import Product from "../../models/product/product.model.js";
 import ApiResponse from "../../utils/ApiResponse.js";
 import { asyncHandler } from "../../utils/asyncHandler.js";
 
-/* ==================================================
-   GET current user's cart
-   GET /api/v1/cart
-   ================================================== */
 export const getCart = asyncHandler(async (req, res) => {
   const cart = await Cart.findOne({ user_id: req.user._id }).populate(
     "items.product_id"
@@ -15,11 +11,6 @@ export const getCart = asyncHandler(async (req, res) => {
   res.json(new ApiResponse(200, cart || { items: [] }, "Fetched cart"));
 });
 
-/* ==================================================
-   ADD item to cart (add or update quantity)
-   POST /api/v1/cart
-   Body: { product_id, quantity }
-   ================================================== */
 export const addToCart = asyncHandler(async (req, res) => {
   const { product_id, quantity } = req.body;
   if (!mongoose.Types.ObjectId.isValid(product_id) || quantity < 1)
@@ -51,11 +42,6 @@ export const addToCart = asyncHandler(async (req, res) => {
   res.json(new ApiResponse(200, cart, "Added to cart"));
 });
 
-/* ==================================================
-   UPDATE item quantity in cart
-   PUT /api/v1/cart
-   Body: { product_id, quantity }
-   ================================================== */
 export const updateCartItem = asyncHandler(async (req, res) => {
   const { product_id, quantity } = req.body;
   if (!mongoose.Types.ObjectId.isValid(product_id) || quantity < 1)
@@ -78,10 +64,6 @@ export const updateCartItem = asyncHandler(async (req, res) => {
   res.json(new ApiResponse(200, cart, "Cart item updated"));
 });
 
-/* ==================================================
-   REMOVE item from cart
-   DELETE /api/v1/cart/:productId
-   ================================================== */
 export const removeFromCart = asyncHandler(async (req, res) => {
   const { productId } = req.params;
   if (!mongoose.Types.ObjectId.isValid(productId))
@@ -96,10 +78,6 @@ export const removeFromCart = asyncHandler(async (req, res) => {
   res.json(new ApiResponse(200, cart, "Removed from cart"));
 });
 
-/* ==================================================
-   CLEAR cart
-   DELETE /api/v1/cart
-   ================================================== */
 export const clearCart = asyncHandler(async (req, res) => {
   const cart = await Cart.findOne({ user_id: req.user._id });
   if (!cart)
