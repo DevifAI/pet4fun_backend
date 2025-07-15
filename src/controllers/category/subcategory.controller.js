@@ -7,6 +7,7 @@ import handleMongoErrors from "../../utils/mongooseError.js";
 import Product from "../../models/product/product.model.js";
 // import { subCategoryQueue } from "../../queues/subCategory.queue.js";
 import { checkIfProductsUsedInOrderOrCart } from "./../../handler/checkOrder&Cart.js";
+import ChildSubCategory from "../../models/productCategory/childSubCategory.model.js";
 
 // Create SubCategory
 export const createSubCategory = asyncHandler(async (req, res) => {
@@ -17,11 +18,10 @@ export const createSubCategory = asyncHandler(async (req, res) => {
       return res
         .status(400)
         .json(
-          new ApiResponse(400, null, "Name and parentCategory is required")
+          new ApiResponse(400, null, "Name and parentCategory are required")
         );
     }
 
-    // Validate ObjectId
     if (!mongoose.Types.ObjectId.isValid(parentCategory)) {
       return res
         .status(400)
@@ -30,7 +30,6 @@ export const createSubCategory = asyncHandler(async (req, res) => {
         );
     }
 
-    // Get parent category
     const parent = await Category.findById(parentCategory);
     if (!parent || parent.isDeleted) {
       return res
@@ -44,7 +43,6 @@ export const createSubCategory = asyncHandler(async (req, res) => {
         );
     }
 
-    // Generate compound slug (e.g., "dog-pharmacy")
     const formattedParentName = parent.name
       .trim()
       .toLowerCase()
@@ -52,10 +50,9 @@ export const createSubCategory = asyncHandler(async (req, res) => {
     const formattedName = name.trim().toLowerCase().replace(/\s+/g, "-");
     const finalSlug = `${formattedParentName}-${formattedName}`;
 
-    // Check for duplicate slug under same parent category
     const existing = await SubCategory.findOne({
       slug: finalSlug,
-      parentSubCategory: parentCategory,
+      parentCategory: parentCategory,
     });
 
     if (existing) {
@@ -65,16 +62,15 @@ export const createSubCategory = asyncHandler(async (req, res) => {
           new ApiResponse(
             409,
             null,
-            `SubCategory with name "${name}" already exists under "${parent.name}"`
+            `SubCategory "${name}" already exists under "${parent.name}"`
           )
         );
     }
 
-    // Create SubCategory
     const subCategory = await SubCategory.create({
       name,
       slug: finalSlug,
-      parentSubCategory: parentCategory,
+      parentCategory, // Changed from parentSubCategory to parentCategory
       attributes,
     });
 
@@ -128,9 +124,9 @@ export const getSubCategoriesByParent = asyncHandler(async (req, res) => {
 // Update SubCategory
 export const updateSubCategory = asyncHandler(async (req, res) => {
   try {
-    const { name, slug, parentCategory } = req.body;
+    const { name, slug, parentCategory } = req.body; // Changed from parentSubCategory to parentCategory
 
-    // ✅ Validate parentCategory if provided
+    // Validate parentCategory if provided
     if (parentCategory) {
       if (!mongoose.Types.ObjectId.isValid(parentCategory)) {
         return res
@@ -148,7 +144,7 @@ export const updateSubCategory = asyncHandler(async (req, res) => {
       }
     }
 
-    // ✅ Fetch existing SubCategory
+    // Fetch existing SubCategory
     const existingSubCategory = await SubCategory.findById(req.params.id);
     if (!existingSubCategory) {
       return res
@@ -156,13 +152,13 @@ export const updateSubCategory = asyncHandler(async (req, res) => {
         .json(new ApiResponse(404, null, "SubCategory not found"));
     }
 
-    // ✅ Generate slug if name is updated
+    // Generate slug if name is updated
     if (name) {
       const finalSlug =
         slug?.trim().toLowerCase().replace(/\s+/g, "-") ||
         name.trim().toLowerCase().replace(/\s+/g, "-");
 
-      // ✅ Check if slug is already taken
+      // Check if slug is already taken
       const slugExists = await SubCategory.findOne({
         slug: finalSlug,
         _id: { $ne: req.params.id },
@@ -183,7 +179,7 @@ export const updateSubCategory = asyncHandler(async (req, res) => {
       req.body.slug = finalSlug;
     }
 
-    // ✅ Perform update
+    // Perform update
     const updated = await SubCategory.findByIdAndUpdate(
       req.params.id,
       req.body,
@@ -201,8 +197,22 @@ export const updateSubCategory = asyncHandler(async (req, res) => {
     return handleMongoErrors(error, res);
   }
 });
+// Get deleted subcategories
+export const getDeletedSubCategories = asyncHandler(async (req, res) => {
+  try {
+    const deletedSubs = await SubCategory.find({ isDeleted: true }).populate(
+      "parentCategory"
+    );
+    return res.json(
+      new ApiResponse(200, deletedSubs, "Fetched deleted subcategories")
+    );
+  } catch (error) {
+    console.error("Get Deleted SubCategories Error:", error);
+    return handleMongoErrors(error, res);
+  }
+});
 
-// Soft or Hard Delete SubCategory
+// Improved Soft or Hard Delete SubCategory with Child Subcategory handling
 export const deleteSubCategory = asyncHandler(async (req, res) => {
   const subCategoryId = req.params.id;
   const { mode = "soft" } = req.query;
@@ -221,12 +231,17 @@ export const deleteSubCategory = asyncHandler(async (req, res) => {
         .json(new ApiResponse(404, null, "Subcategory not found"));
     }
 
-    const products = await Product.find({ subCategory: subCategoryId }).select(
-      "_id"
-    );
+    // Find all related products and child subcategories
+    const [products, childSubCategories] = await Promise.all([
+      Product.find({ subCategory: subCategoryId }).select("_id"),
+      ChildSubCategory.find({ parentSubCategory: subCategoryId }).select("_id"),
+    ]);
+
     const productIds = products.map((p) => p._id);
+    const childSubCategoryIds = childSubCategories.map((c) => c._id);
 
     if (mode === "hard") {
+      // Check if any products are in active orders or carts
       const { used } = await checkIfProductsUsedInOrderOrCart(productIds);
 
       if (used) {
@@ -236,39 +251,98 @@ export const deleteSubCategory = asyncHandler(async (req, res) => {
             new ApiResponse(
               400,
               null,
-              "Cannot hard delete subcategory — products exist in active orders or carts"
+              "Cannot hard delete - products exist in active orders or carts"
             )
           );
       }
 
-      await Promise.all([
-        Product.deleteMany({ subCategory: subCategoryId }),
-        SubCategory.findByIdAndDelete(subCategoryId),
-      ]);
+      // Perform hard delete in transaction
+      const session = await mongoose.startSession();
+      session.startTransaction();
 
-      return res
-        .status(200)
-        .json(
-          new ApiResponse(
-            200,
-            null,
-            "Subcategory and related products hard deleted"
-          )
-        );
+      try {
+        // Delete all related products
+        await Product.deleteMany({
+          $or: [
+            { subCategory: subCategoryId },
+            { childSubCategory: { $in: childSubCategoryIds } },
+          ],
+        }).session(session);
+
+        // Delete all child subcategories
+        await ChildSubCategory.deleteMany({
+          parentSubCategory: subCategoryId,
+        }).session(session);
+
+        // Delete the subcategory itself
+        await SubCategory.findByIdAndDelete(subCategoryId).session(session);
+
+        await session.commitTransaction();
+
+        return res
+          .status(200)
+          .json(
+            new ApiResponse(
+              200,
+              null,
+              "Subcategory, its child subcategories and related products hard deleted"
+            )
+          );
+      } catch (error) {
+        await session.abortTransaction();
+        throw error;
+      } finally {
+        session.endSession();
+      }
     } else {
-      await Promise.all([
-        SubCategory.findByIdAndUpdate(subCategoryId, {
-          $set: { isDeleted: true },
-        }),
-        Product.updateMany(
-          { subCategory: subCategoryId },
-          { $set: { isDeleted: true, status: false } }
-        ),
-      ]);
+      // Perform soft delete
+      const session = await mongoose.startSession();
+      session.startTransaction();
 
-      return res
-        .status(200)
-        .json(new ApiResponse(200, null, "Subcategory soft deleted"));
+      try {
+        // Soft delete the subcategory
+        await SubCategory.findByIdAndUpdate(
+          subCategoryId,
+          { $set: { isDeleted: true } },
+          { session }
+        );
+
+        // Soft delete all child subcategories
+        await ChildSubCategory.updateMany(
+          { parentSubCategory: subCategoryId },
+          { $set: { isDeleted: true } },
+          { session }
+        );
+
+        // Soft delete all related products
+        await Product.updateMany(
+          {
+            $or: [
+              { subCategory: subCategoryId },
+              { childSubCategory: { $in: childSubCategoryIds } },
+            ],
+          },
+          { $set: { isDeleted: true, status: false } },
+          { session }
+        );
+
+        await session.commitTransaction();
+
+        return res
+          .status(200)
+          .json(
+            new ApiResponse(
+              200,
+              null,
+              "Subcategory, its child subcategories and related products soft deleted"
+            )
+          );
+      } catch (error) {
+        await session.abortTransaction();
+        throw error;
+      } finally {
+        session.endSession();
+      }
     }
   } catch (error) {
     console.error("Delete SubCategory Error:", error);
@@ -276,7 +350,7 @@ export const deleteSubCategory = asyncHandler(async (req, res) => {
   }
 });
 
-// Restore SubCategory
+// Improved Restore SubCategory with Child Subcategory handling
 export const restoreSubCategory = asyncHandler(async (req, res) => {
   const { id: subCategoryId } = req.params;
 
@@ -300,20 +374,73 @@ export const restoreSubCategory = asyncHandler(async (req, res) => {
       );
     }
 
-    await SubCategory.findByIdAndUpdate(subCategoryId, {
-      $set: { isDeleted: false },
-    });
+    // Check if parent category is deleted
+    const parentCategory = await Category.findById(subCategory.parentCategory);
+    if (parentCategory && parentCategory.isDeleted) {
+      return res
+        .status(400)
+        .json(
+          new ApiResponse(
+            400,
+            null,
+            `Cannot restore subcategory. First restore its parent category: ${parentCategory.name}`
+          )
+        );
+    }
 
-    await Product.updateMany(
-      { subCategory: subCategoryId },
-      { $set: { isDeleted: false } }
-    );
+    // Find all child subcategories
+    const childSubCategories = await ChildSubCategory.find({
+      parentSubCategory: subCategoryId,
+    }).select("_id");
 
-    // await subCategoryQueue.add({ subCategoryId, mode: "restore" });
+    const childSubCategoryIds = childSubCategories.map((c) => c._id);
 
-    return res.json(
-      new ApiResponse(200, subCategory, "SubCategory restore job queued")
-    );
+    // Perform restore in transaction
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+      // Restore the subcategory
+      await SubCategory.findByIdAndUpdate(
+        subCategoryId,
+        { $set: { isDeleted: false } },
+        { session }
+      );
+
+      // Restore all child subcategories
+      await ChildSubCategory.updateMany(
+        { parentSubCategory: subCategoryId },
+        { $set: { isDeleted: false } },
+        { session }
+      );
+
+      // Restore all related products
+      await Product.updateMany(
+        {
+          $or: [
+            { subCategory: subCategoryId },
+            { childSubCategory: { $in: childSubCategoryIds } },
+          ],
+        },
+        { $set: { isDeleted: false } },
+        { session }
+      );
+
+      await session.commitTransaction();
+
+      return res.json(
+        new ApiResponse(
+          200,
+          subCategory,
+          "SubCategory and all related child subcategories restored"
+        )
+      );
+    } catch (error) {
+      await session.abortTransaction();
+      throw error;
+    } finally {
+      session.endSession();
+    }
   } catch (error) {
     console.error("Restore SubCategory Error:", error);
     return handleMongoErrors(error, res);

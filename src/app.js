@@ -17,16 +17,24 @@ app.use(express.urlencoded({ extended: true, limit: "16kb" }));
 app.use(express.static("public"));
 
 // Import routes
+import userRoutes from "./routes/user/user.routes.js";
 import productRoutes from "./routes/product/product.routes.js";
 import categoryRoutes from "./routes/productCategory/product.Category.routes.js";
-import subCategoryRoutes  from "./routes/productCategory/subCategory.routes.js";
-import childCategoryRoutes  from "./routes/productCategory/childSubCategory.routes.js";
+import subCategoryRoutes from "./routes/productCategory/subCategory.routes.js";
+import childCategoryRoutes from "./routes/productCategory/childSubCategory.routes.js";
+import cartRoutes from "./routes/cart/cart.routes.js";
+import orderRoutes from "./routes/order/order.routes.js";
+import wishlistRoutes from "./routes/wishlist/wishlist.route.js";
 
 // Use routes
+app.use("/api/v1/user", userRoutes);
 app.use("/api/v1/products", productRoutes);
 app.use("/api/v1/category", categoryRoutes);
 app.use("/api/v1/subcategories", subCategoryRoutes);
 app.use("/api/v1/childCategories", childCategoryRoutes);
+app.use("/api/v1/cart", cartRoutes);
+app.use("/api/v1/orders", orderRoutes);
+app.use("/api/v1/wishlist", wishlistRoutes);
 
 // Home route
 app.get("/", (req, res) => {

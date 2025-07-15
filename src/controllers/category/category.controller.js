@@ -12,12 +12,17 @@ import ChildSubCategory from "../../models/productCategory/childSubCategory.mode
 // Create Category
 export const createCategory = asyncHandler(async (req, res) => {
   try {
-    const { name, slug } = req.body;
+    const { name, slug, image } = req.body;
 
     if (!name) {
       return res
         .status(400)
         .json(new ApiResponse(400, null, "Category name is required"));
+    }
+    if (!image) {
+      return res
+        .status(400)
+        .json(new ApiResponse(400, null, "Category image is required"));
     }
 
     const finalSlug =
@@ -35,6 +40,7 @@ export const createCategory = asyncHandler(async (req, res) => {
 
     const category = await Category.create({
       name,
+      image,
       slug: finalSlug,
     });
 
@@ -164,22 +170,48 @@ export const restoreCategory = asyncHandler(async (req, res) => {
       );
     }
 
+    // Find all subcategories and child subcategories
+    const subCategories = await SubCategory.find({
+      parentCategory: categoryId,
+    }).select("_id");
+    const subCategoryIds = subCategories.map((s) => s._id);
+
     await Promise.all([
+      // Restore the category
+      Category.findByIdAndUpdate(categoryId, { $set: { isDeleted: false } }),
+
+      // Restore all subcategories
       SubCategory.updateMany(
         { parentCategory: categoryId },
         { $set: { isDeleted: false } }
       ),
+
+      // Restore all child subcategories
+      ChildSubCategory.updateMany(
+        { parentCategory: categoryId },
+        { $set: { isDeleted: false } }
+      ),
+
+      // Restore all related products
       Product.updateMany(
-        { category: categoryId },
+        {
+          $or: [
+            { category: categoryId },
+            { subCategory: { $in: subCategoryIds } },
+          ],
+        },
         { $set: { isDeleted: false, status: true } }
       ),
     ]);
 
-    category.isDeleted = false;
-    await category.save();
+    const updatedCategory = await Category.findById(categoryId);
 
     return res.json(
-      new ApiResponse(200, category, "Category successfully restored")
+      new ApiResponse(
+        200,
+        updatedCategory,
+        "Category and all related items restored successfully"
+      )
     );
   } catch (error) {
     console.error("Restore Category Error:", error);
@@ -209,6 +241,16 @@ export const deleteCategory = asyncHandler(async (req, res) => {
     const products = await Product.find({ category: categoryId }).select("_id");
     const productIds = products.map((p) => p._id);
 
+    // Find all subcategories and child subcategories
+    const subCategories = await SubCategory.find({
+      parentCategory: categoryId,
+    }).select("_id");
+    const subCategoryIds = subCategories.map((s) => s._id);
+
+    const childSubCategories = await ChildSubCategory.find({
+      parentCategory: categoryId,
+    }).select("_id");
+
     if (mode === "hard") {
       const { used } = await checkIfProductsUsedInOrderOrCart(productIds);
 
@@ -225,21 +267,35 @@ export const deleteCategory = asyncHandler(async (req, res) => {
       }
 
       await Promise.all([
+        ChildSubCategory.deleteMany({ parentCategory: categoryId }),
         SubCategory.deleteMany({ parentCategory: categoryId }),
-        Product.deleteMany({ category: categoryId }),
+        Product.deleteMany({
+          $or: [
+            { category: categoryId },
+            { subCategory: { $in: subCategoryIds } },
+          ],
+        }),
         Category.findByIdAndDelete(categoryId),
       ]);
     } else {
-      category.isDeleted = true;
-      await category.save();
-
+      // Soft delete
       await Promise.all([
+        Category.findByIdAndUpdate(categoryId, { $set: { isDeleted: true } }),
         SubCategory.updateMany(
           { parentCategory: categoryId },
           { $set: { isDeleted: true } }
         ),
+        ChildSubCategory.updateMany(
+          { parentCategory: categoryId },
+          { $set: { isDeleted: true } }
+        ),
         Product.updateMany(
-          { category: categoryId },
+          {
+            $or: [
+              { category: categoryId },
+              { subCategory: { $in: subCategoryIds } },
+            ],
+          },
           { $set: { isDeleted: true, status: false } }
         ),
       ]);
@@ -262,56 +318,72 @@ export const deleteCategory = asyncHandler(async (req, res) => {
 export const getCategoryTree = asyncHandler(async (req, res) => {
   try {
     const categories = await Category.find({ isDeleted: false })
-      .select("name slug") // include slug
+      .select("name slug image")
       .lean();
 
     const subCategories = await SubCategory.find({ isDeleted: false })
-      .select("name slug parentSubCategory") // include slug
+      .select("name slug parentCategory")
       .lean();
 
     const childSubCategories = await ChildSubCategory.find({ isDeleted: false })
-      .select("name slug parentSubCategories") // include slug
+      .select("name slug parentCategory parentSubCategory")
       .lean();
 
-    // Create tree
-    const categoryTree = categories.map((cat) => {
-      // SubCategories under this category
-      const subs = subCategories
-        .filter(
-          (sub) => sub.parentSubCategory?.toString() === cat._id.toString()
-        )
-        .map((sub) => {
-          // ChildSubCategories that reference this SubCategory
-          const childs = childSubCategories.filter((child) =>
-            child.parentSubCategories?.some(
-              (parentSubId) => parentSubId.toString() === sub._id.toString()
-            )
-          );
-          return {
-            _id: sub._id,
-            name: sub.name,
-            slug: sub.slug,
-            childSubCategories: childs.map((child) => ({
-              _id: child._id,
-              name: child.name,
-              slug: child.slug,
-            })),
-          };
-        });
+    // Create the hierarchical tree
+    const categoryTree = categories.map((category) => {
+      // Find all subcategories for this category
+      const categorySubs = subCategories.filter(
+        (sub) => sub.parentCategory.toString() === category._id.toString()
+      );
+
+      // For each subcategory, find its child subcategories
+      const subsWithChildren = categorySubs.map((sub) => {
+        const childSubs = childSubCategories.filter(
+          (child) => child.parentSubCategory.toString() === sub._id.toString()
+        );
+
+        return {
+          _id: sub._id,
+          name: sub.name,
+          slug: sub.slug,
+          childSubCategories: childSubs.map((child) => ({
+            _id: child._id,
+            name: child.name,
+            slug: child.slug,
+          })),
+        };
+      });
 
       return {
-        _id: cat._id,
-        name: cat.name,
-        slug: cat.slug,
-        subCategories: subs,
+        _id: category._id,
+        name: category.name,
+        slug: category.slug,
+        image: category.image,
+        subCategories: subsWithChildren,
       };
     });
 
     return res
       .status(200)
-      .json(new ApiResponse(200, categoryTree, "Category tree fetched"));
+      .json(
+        new ApiResponse(200, categoryTree, "Category tree fetched successfully")
+      );
   } catch (error) {
     console.error("Get Category Tree Error:", error);
+    return handleMongoErrors(error, res);
+  }
+});
+
+// Get All Deleted Categories
+export const getDeletedCategories = asyncHandler(async (req, res) => {
+  try {
+    const categories = await Category.find({ isDeleted: true });
+
+    return res.json(
+      new ApiResponse(200, categories, "Fetched all deleted categories")
+    );
+  } catch (error) {
+    console.error("Get Deleted Categories Error:", error);
     return handleMongoErrors(error, res);
   }
 });

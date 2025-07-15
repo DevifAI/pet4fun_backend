@@ -1,15 +1,5 @@
 import mongoose from "mongoose";
-
-const addressSchema = new mongoose.Schema(
-  {
-    street: String,
-    city: String,
-    state: String,
-    pincode: String,
-    country: String,
-  },
-  { _id: false }
-);
+import addressSchema from "../order/address.model.js";
 
 const userSchema = new mongoose.Schema(
   {
@@ -18,9 +8,10 @@ const userSchema = new mongoose.Schema(
     password: String,
     phone: String,
     address: addressSchema,
-    isAdmin: { type: Boolean, default: false },
   },
   { timestamps: true }
 );
 
-export default mongoose.model("User", userSchema);
+const User = mongoose.model("User", userSchema);
+
+export default User;

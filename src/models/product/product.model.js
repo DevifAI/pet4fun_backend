@@ -12,18 +12,18 @@ const productSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Category",
       required: true,
-      index: true
+      index: true,
     },
     subCategory_id: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "SubCategory",
       required: true,
-      index: true
+      index: true,
     },
     childSubCategory_id: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "ChildSubCategory",
-      index: true
+      index: true,
     },
 
     price: { type: Number, required: true },
@@ -34,11 +34,16 @@ const productSchema = new mongoose.Schema(
     images: { type: [String], default: [] },
 
     breed: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Breed"
+      type: String,
+      default: "",
+    },
+    gender: {
+      type: String,
+      enum: ["male", "female", ""],
+      default: "",
     },
     dob: Date,
-    gender: { type: String, enum: ["male", "female"] },
+
     availableFrom: Date,
 
     isVaccinated: { type: Boolean, default: false },
@@ -53,11 +58,15 @@ const productSchema = new mongoose.Schema(
     filterAttributes: {
       type: Map,
       of: String,
-      default: {}
+      default: {},
     },
 
+    bestSeller: { type: Boolean, default: false },
+    popular: { type: Boolean, default: false },
+    onSale: { type: Boolean, default: false },
+
     status: { type: Boolean, default: true },
-    isDeleted: { type: Boolean, default: false }
+    isDeleted: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

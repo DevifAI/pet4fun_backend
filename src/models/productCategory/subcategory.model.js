@@ -4,17 +4,15 @@ const subCategorySchema = new mongoose.Schema(
   {
     name: { type: String, required: true },
     slug: { type: String, required: true, unique: true },
-
-    parentSubCategory: {
+    parentCategory: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Category",
       required: true,
       index: true,
     },
-
     attributes: {
       type: Map,
-      of: [String], // key will be String, value will be array of Strings
+      of: [String],
       default: {},
     },
     isDeleted: { type: Boolean, default: false },

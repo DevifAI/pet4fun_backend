@@ -5,7 +5,8 @@ import {
   getAllSubCategories,
   getSubCategoriesByParent,
   updateSubCategory,
-  restoreSubCategory, // eta controller a ase, route a add kora lagbe
+  restoreSubCategory,
+  getDeletedSubCategories, // eta controller a ase, route a add kora lagbe
 } from "../../controllers/category/subcategory.controller.js";
 
 const router = express.Router();
@@ -15,6 +16,7 @@ router.post("/create", createSubCategory);
 
 // Get all subcategories (only not soft-deleted)
 router.get("/", getAllSubCategories);
+router.get("/deleted", getDeletedSubCategories);
 
 // Get subcategories by parent category id
 router.get("/parent/:parentId", getSubCategoriesByParent);

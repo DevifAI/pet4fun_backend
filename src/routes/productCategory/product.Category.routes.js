@@ -5,6 +5,7 @@ import {
   getAllCategories,
   getCategoryById,
   getCategoryTree,
+  getDeletedCategories,
   restoreCategory,
   updateCategory,
 } from "../../controllers/category/category.controller.js";
@@ -16,6 +17,7 @@ router.post("/create", createCategory);
 
 // Get all categories (excluding soft-deleted ones)
 router.get("/", getAllCategories);
+router.get("/deleted", getDeletedCategories);
 
 
 // Get category tree structure

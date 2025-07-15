@@ -20,7 +20,7 @@ const validateCategories = async ({
     throw new ApiResponse(404, null, "Category not found");
   }
 
-  // Validate subCategory
+  // Validate subCategory if provided
   if (subCategory_id) {
     if (!mongoose.Types.ObjectId.isValid(subCategory_id)) {
       throw new ApiResponse(400, null, "Invalid subCategory_id");
@@ -31,10 +31,8 @@ const validateCategories = async ({
       throw new ApiResponse(404, null, "Sub-category not found");
     }
 
-    if (
-      !subCategory.parentSubCategory ||
-      !subCategory.parentSubCategory.equals(category._id)
-    ) {
+    // Check if subCategory belongs to the category
+    if (!subCategory.parentCategory.equals(category._id)) {
       throw new ApiResponse(
         400,
         null,
@@ -42,7 +40,7 @@ const validateCategories = async ({
       );
     }
 
-    // Validate childSubCategory
+    // Validate childSubCategory if provided
     if (childSubCategory_id) {
       if (!mongoose.Types.ObjectId.isValid(childSubCategory_id)) {
         throw new ApiResponse(400, null, "Invalid childSubCategory_id");
@@ -51,20 +49,25 @@ const validateCategories = async ({
       const childSubCategory = await ChildSubCategory.findById(
         childSubCategory_id
       );
-
       if (!childSubCategory) {
         throw new ApiResponse(404, null, "Child sub-category not found");
       }
 
-      const isMatch = childSubCategory.parentSubCategories.some((id) =>
-        id.equals(subCategory._id)
-      );
-
-      if (!isMatch) {
+      // Check if childSubCategory belongs to the subCategory
+      if (!childSubCategory.parentSubCategory.equals(subCategory._id)) {
         throw new ApiResponse(
           400,
           null,
           "childSubCategory_id does not belong to the supplied subCategory_id"
+        );
+      }
+
+      // Additional check: childSubCategory should also belong to the same category
+      if (!childSubCategory.parentCategory.equals(category._id)) {
+        throw new ApiResponse(
+          400,
+          null,
+          "childSubCategory_id does not belong to the supplied category_id"
         );
       }
     }
@@ -230,6 +233,17 @@ export const getAllProducts = asyncHandler(async (req, res) => {
       filter.price.$gte = Number(req.query.minPrice);
     if (req.query.maxPrice && req.query.maxPrice !== "")
       filter.price.$lte = Number(req.query.maxPrice);
+  }
+
+  // Add boolean filters for bestSeller, popular, onSale
+  if (req.query.bestSeller && req.query.bestSeller === "true") {
+    filter.bestSeller = true;
+  }
+  if (req.query.popular && req.query.popular === "true") {
+    filter.popular = true;
+  }
+  if (req.query.onSale && req.query.onSale === "true") {
+    filter.onSale = true;
   }
 
   const [products, total] = await Promise.all([

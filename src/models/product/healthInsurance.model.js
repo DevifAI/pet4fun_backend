@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 
 const healthInsuranceSchema = new mongoose.Schema(
   {
-    planName: { type: String, required: true },
+    planName: { type: String },
     coverageMths: Number,
     expiresAt: Date,
   },
