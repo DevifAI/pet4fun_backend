@@ -303,11 +303,16 @@ export const updateOrderStatus = asyncHandler(async (req, res) => {
       updateData.deliveryDate = deliveryDate;
     }
 
-    const order = await Order.findOneAndUpdate(
-      { _id: orderId, user_id: req.user._id },
-      updateData,
-      { new: true, runValidators: true }
-    );
+    // const order = await Order.findOneAndUpdate(
+    //   { _id: orderId, user_id: req.user._id },
+    //   updateData,
+    //   { new: true, runValidators: true }
+    // );
+
+    const order = await Order.findOneAndUpdate({ _id: orderId }, updateData, {
+      new: true,
+      runValidators: true,
+    });
 
     if (!order) {
       return res
@@ -319,6 +324,7 @@ export const updateOrderStatus = asyncHandler(async (req, res) => {
       new ApiResponse(200, order, "Order status updated successfully")
     );
   } catch (error) {
+    console.log("Error updating order status:", error.message);
     return handleMongoErrors(error, res);
   }
 });
@@ -347,8 +353,14 @@ export const updatePaymentStatus = asyncHandler(async (req, res) => {
         );
     }
 
+    // const order = await Order.findOneAndUpdate(
+    //   { _id: orderId, user_id: req.user._id },
+    //   { paymentStatus },
+    //   { new: true, runValidators: true }
+    // );
+
     const order = await Order.findOneAndUpdate(
-      { _id: orderId, user_id: req.user._id },
+      { _id: orderId },
       { paymentStatus },
       { new: true, runValidators: true }
     );

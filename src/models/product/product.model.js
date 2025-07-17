@@ -57,7 +57,7 @@ const productSchema = new mongoose.Schema(
 
     filterAttributes: {
       type: Map,
-      of: String,
+      of: [String],
       default: {},
     },
 
