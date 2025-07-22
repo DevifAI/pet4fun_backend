@@ -231,17 +231,78 @@ export const deleteSubCategory = asyncHandler(async (req, res) => {
         .json(new ApiResponse(404, null, "Subcategory not found"));
     }
 
-    // Find all related products and child subcategories
-    const [products, childSubCategories] = await Promise.all([
-      Product.find({ subCategory: subCategoryId }).select("_id"),
-      ChildSubCategory.find({ parentSubCategory: subCategoryId }).select("_id"),
-    ]);
+    // Find all related products (including those in child subcategories)
+    const childSubCategories = await ChildSubCategory.find({
+      parentSubCategory: subCategoryId,
+    }).select("_id");
 
-    const productIds = products.map((p) => p._id);
     const childSubCategoryIds = childSubCategories.map((c) => c._id);
 
+    const products = await Product.find({
+      $or: [
+        { subCategory_id: subCategoryId },
+        { childSubCategory_id: { $in: childSubCategoryIds } },
+      ],
+    }).select("_id");
+
+    const productIds = products.map((p) => p._id);
+
     if (mode === "hard") {
-      // Check if any products are in active orders or carts
+      // Enhanced check with detailed information
+      const { used, productsInOrders, productsInCarts } =
+        await checkIfProductsUsedInOrderOrCart(productIds);
+
+      if (used) {
+        return res.status(400).json(
+          new ApiResponse(
+            400,
+            {
+              productsInOrders,
+              productsInCarts,
+            },
+            "Cannot hard delete - these products are in active orders or carts: " +
+              `${productsInOrders.length} in orders, ${productsInCarts.length} in carts`
+          )
+        );
+      }
+
+      // Perform hard delete in transaction
+      const session = await mongoose.startSession();
+      session.startTransaction();
+
+      try {
+        // Delete products first
+        await Product.deleteMany({
+          $or: [
+            { subCategory_id: subCategoryId },
+            { childSubCategory_id: { $in: childSubCategoryIds } },
+          ],
+        }).session(session);
+
+        // Then delete child subcategories
+        await ChildSubCategory.deleteMany({
+          parentSubCategory: subCategoryId,
+        }).session(session);
+
+        // Finally delete the subcategory itself
+        await SubCategory.findByIdAndDelete(subCategoryId).session(session);
+
+        await session.commitTransaction();
+
+        return res.json(
+          new ApiResponse(
+            200,
+            null,
+            "Subcategory and all related data hard deleted successfully"
+          )
+        );
+      } catch (error) {
+        await session.abortTransaction();
+        throw error;
+      } finally {
+        session.endSession();
+      }
+    } else {
       const { used } = await checkIfProductsUsedInOrderOrCart(productIds);
 
       if (used) {
@@ -251,75 +312,35 @@ export const deleteSubCategory = asyncHandler(async (req, res) => {
             new ApiResponse(
               400,
               null,
-              "Cannot hard delete - products exist in active orders or carts"
+              "Cannot delete product as it is being used in active orders or carts"
             )
           );
       }
-
-      // Perform hard delete in transaction
+      // Soft delete in transaction
       const session = await mongoose.startSession();
       session.startTransaction();
 
       try {
-        // Delete all related products
-        await Product.deleteMany({
-          $or: [
-            { subCategory: subCategoryId },
-            { childSubCategory: { $in: childSubCategoryIds } },
-          ],
-        }).session(session);
-
-        // Delete all child subcategories
-        await ChildSubCategory.deleteMany({
-          parentSubCategory: subCategoryId,
-        }).session(session);
-
-        // Delete the subcategory itself
-        await SubCategory.findByIdAndDelete(subCategoryId).session(session);
-
-        await session.commitTransaction();
-
-        return res
-          .status(200)
-          .json(
-            new ApiResponse(
-              200,
-              null,
-              "Subcategory, its child subcategories and related products hard deleted"
-            )
-          );
-      } catch (error) {
-        await session.abortTransaction();
-        throw error;
-      } finally {
-        session.endSession();
-      }
-    } else {
-      // Perform soft delete
-      const session = await mongoose.startSession();
-      session.startTransaction();
-
-      try {
-        // Soft delete the subcategory
+        // Update subcategory
         await SubCategory.findByIdAndUpdate(
           subCategoryId,
           { $set: { isDeleted: true } },
           { session }
         );
 
-        // Soft delete all child subcategories
+        // Update child subcategories
         await ChildSubCategory.updateMany(
           { parentSubCategory: subCategoryId },
           { $set: { isDeleted: true } },
           { session }
         );
 
-        // Soft delete all related products
+        // Update products
         await Product.updateMany(
           {
             $or: [
-              { subCategory: subCategoryId },
-              { childSubCategory: { $in: childSubCategoryIds } },
+              { subCategory_id: subCategoryId },
+              { childSubCategory_id: { $in: childSubCategoryIds } },
             ],
           },
           { $set: { isDeleted: true, status: false } },
@@ -328,15 +349,13 @@ export const deleteSubCategory = asyncHandler(async (req, res) => {
 
         await session.commitTransaction();
 
-        return res
-          .status(200)
-          .json(
-            new ApiResponse(
-              200,
-              null,
-              "Subcategory, its child subcategories and related products soft deleted"
-            )
-          );
+        return res.json(
+          new ApiResponse(
+            200,
+            null,
+            "Subcategory and all related data soft deleted successfully"
+          )
+        );
       } catch (error) {
         await session.abortTransaction();
         throw error;

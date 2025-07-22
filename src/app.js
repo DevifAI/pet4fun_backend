@@ -25,6 +25,9 @@ import childCategoryRoutes from "./routes/productCategory/childSubCategory.route
 import cartRoutes from "./routes/cart/cart.routes.js";
 import orderRoutes from "./routes/order/order.routes.js";
 import wishlistRoutes from "./routes/wishlist/wishlist.route.js";
+import vetRoutes from "./routes/vet/vet.routes.js";
+import clinicRoutes from "./routes/clinic/clinic.routes.js";
+import paymentRoutes from "./routes/payment/paymentRoutes.js";
 
 // Use routes
 app.use("/api/v1/user", userRoutes);
@@ -34,7 +37,10 @@ app.use("/api/v1/subcategories", subCategoryRoutes);
 app.use("/api/v1/childCategories", childCategoryRoutes);
 app.use("/api/v1/cart", cartRoutes);
 app.use("/api/v1/orders", orderRoutes);
+app.use("/api/v1/payment", paymentRoutes);
 app.use("/api/v1/wishlist", wishlistRoutes);
+app.use("/api/v1/vet-consultations", vetRoutes);
+app.use("/api/v1/clinic-appointments", clinicRoutes);
 
 // Home route
 app.get("/", (req, res) => {

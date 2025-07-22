@@ -5,6 +5,7 @@ import ApiResponse from "../../utils/ApiResponse.js";
 import { asyncHandler } from "../../utils/asyncHandler.js";
 import SubCategory from "../../models/productCategory/subcategory.model.js";
 import ChildSubCategory from "../../models/productCategory/childSubCategory.model.js";
+import { checkIfProductsUsedInOrderOrCart } from "../../handler/checkOrder&Cart.js";
 
 const validateCategories = async ({
   category_id,
@@ -486,10 +487,38 @@ export const getRelatedProducts = asyncHandler(async (req, res) => {
 
 export const deleteProduct = asyncHandler(async (req, res) => {
   const { productId } = req.params;
-  const deleted = await Product.findByIdAndDelete(productId);
-  if (!deleted)
-    return res
-      .status(404)
-      .json(new ApiResponse(404, null, "Product not found"));
-  res.json(new ApiResponse(200, null, "Product deleted successfully"));
+
+  try {
+    // First check if the product is used in any active order or cart
+    const { used } = await checkIfProductsUsedInOrderOrCart([productId]);
+
+    if (used) {
+      return res
+        .status(400)
+        .json(
+          new ApiResponse(
+            400,
+            null,
+            "Cannot delete product as it is being used in active orders or carts"
+          )
+        );
+    }
+
+    const deleted = await Product.findByIdAndDelete(productId);
+    if (!deleted) {
+      return res
+        .status(404)
+        .json(new ApiResponse(404, null, "Product not found"));
+    }
+
+    return res.json(new ApiResponse(200, null, "Product deleted successfully"));
+  } catch (error) {
+    // Handle any potential errors (like invalid ObjectId format)
+    if (error instanceof mongoose.Error.CastError) {
+      return res
+        .status(400)
+        .json(new ApiResponse(400, null, "Invalid product ID format"));
+    }
+    throw error; // Let asyncHandler handle other errors
+  }
 });

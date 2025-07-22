@@ -5,6 +5,7 @@ import Product from "../../models/product/product.model.js";
 import { asyncHandler } from "../../utils/asyncHandler.js";
 import ApiResponse from "../../utils/ApiResponse.js";
 import handleMongoErrors from "../../utils/mongooseError.js";
+import { initiateEasebuzzPayment } from "../../services/paymentService.js";
 
 const generateTrackingNumber = () => {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -15,6 +16,19 @@ const generateTrackingNumber = () => {
   return result;
 };
 
+async function generateUniqueTrackingNumber(session) {
+  let trackingNumber;
+  let isUnique = false;
+
+  while (!isUnique) {
+    trackingNumber = generateTrackingNumber();
+    const exists = await Order.findOne({ trackingNumber }).session(session);
+    if (!exists) isUnique = true;
+  }
+
+  return trackingNumber;
+}
+
 const generateOrderNumber = async () => {
   const timestamp = Date.now();
   const randomNum = Math.floor(Math.random() * 10000)
@@ -22,6 +36,25 @@ const generateOrderNumber = async () => {
     .padStart(4, "0");
   return `ORD-${timestamp}-${randomNum}`;
 };
+
+async function restoreProductStock(orderItems, session) {
+  try {
+    // Update stock for each product in the order
+    const bulkOps = orderItems.map((item) => ({
+      updateOne: {
+        filter: { _id: item.product_id },
+        update: { $inc: { stock: item.quantity } },
+      },
+    }));
+
+    if (bulkOps.length > 0) {
+      await Product.bulkWrite(bulkOps, { session });
+    }
+  } catch (error) {
+    console.error("Error restoring product stock:", error);
+    throw error; // Let the calling function handle this
+  }
+}
 
 export const createOrder = asyncHandler(async (req, res) => {
   const userId = req.user._id;
@@ -36,6 +69,19 @@ export const createOrder = asyncHandler(async (req, res) => {
           400,
           null,
           "Shipping address and payment method are required"
+        )
+      );
+  }
+
+  // Validate payment method
+  if (!["COD", "ONLINE"].includes(paymentMethod)) {
+    return res
+      .status(400)
+      .json(
+        new ApiResponse(
+          400,
+          null,
+          "Invalid payment method. Must be COD or ONLINE"
         )
       );
   }
@@ -68,23 +114,23 @@ export const createOrder = asyncHandler(async (req, res) => {
   session.startTransaction();
 
   try {
+    // 1. Verify cart exists with items
     const cart = await Cart.findOne({ user_id: userId }).session(session);
-    if (!cart || !cart.items || cart.items.length === 0) {
+    if (!cart?.items?.length) {
       await session.abortTransaction();
       return res.status(400).json(new ApiResponse(400, null, "Cart is empty"));
     }
 
+    // 2. Process cart items and check stock
     let totalAmount = 0;
     let taxAmount = 0;
     let shippingFee = 0;
     const orderItems = [];
     const outOfStockItems = [];
 
-    // Check product availability and prepare order items
     for (const item of cart.items) {
-      const product = await Product.findById(item.product_id)
-        .session(session)
-        .lean();
+      const product = await Product.findById(item.product_id).session(session);
+
       if (!product) {
         outOfStockItems.push(item.product_id);
         continue;
@@ -99,10 +145,9 @@ export const createOrder = asyncHandler(async (req, res) => {
         continue;
       }
 
-      const { _id, createdAt, updatedAt, __v, ...cleanProduct } = product;
+      const { _id, createdAt, updatedAt, __v, ...cleanProduct } =
+        product.toObject();
       const subtotal = product.price * item.quantity;
-      totalAmount += subtotal;
-      taxAmount += subtotal * 0.1; // Assuming 10% tax
 
       orderItems.push({
         product_id: item.product_id,
@@ -112,7 +157,10 @@ export const createOrder = asyncHandler(async (req, res) => {
         subtotal,
       });
 
-      // Reduce product stock
+      totalAmount += subtotal;
+      taxAmount += subtotal * 0.1; // 10% tax
+
+      // Reserve product stock
       await Product.findByIdAndUpdate(
         item.product_id,
         { $inc: { stock: -item.quantity } },
@@ -133,23 +181,15 @@ export const createOrder = asyncHandler(async (req, res) => {
         );
     }
 
-    // Apply shipping fee
+    // 3. Calculate final amounts
     shippingFee = totalAmount < 100 ? 5 : 0;
     totalAmount += taxAmount + shippingFee;
 
-    // Generate unique order number and tracking number
+    // 4. Generate unique order identifiers
     const orderNumber = await generateOrderNumber();
-    let trackingNumber;
-    let isUnique = false;
+    const trackingNumber = await generateUniqueTrackingNumber(session);
 
-    // Ensure tracking number is unique
-    while (!isUnique) {
-      trackingNumber = generateTrackingNumber();
-      const exists = await Order.findOne({ trackingNumber }).session(session);
-      if (!exists) isUnique = true;
-    }
-
-    // Create order
+    // 5. Create the order document
     const orderDoc = new Order({
       user_id: userId,
       orderNumber,
@@ -159,30 +199,97 @@ export const createOrder = asyncHandler(async (req, res) => {
       shippingFee,
       shippingAddress,
       paymentMethod,
-      paymentStatus: paymentMethod === "COD" ? "Pending" : "Paid",
+      paymentStatus: "Pending",
       orderStatus: "Processing",
       trackingNumber,
       notes,
       couponUsed: couponCode ? { code: couponCode, discount: 10 } : null,
     });
 
+    // 6. Save the order within the transaction
     await orderDoc.save({ session });
 
-    // Clear cart items
-    await Cart.findOneAndUpdate(
-      { user_id: userId },
-      { $set: { items: [] } },
-      { session }
-    );
+    // 7. Handle payment based on method
+    if (paymentMethod === "COD") {
+      // Clear cart for COD orders
+      await Cart.findOneAndUpdate(
+        { user_id: userId },
+        { $set: { items: [] } },
+        { session }
+      );
 
-    await session.commitTransaction();
+      await session.commitTransaction();
+      return res
+        .status(201)
+        .json(new ApiResponse(201, orderDoc, "Order created successfully"));
+    } else {
+      // ONLINE payment - initiate payment flow
+      const paymentResult = await initiateEasebuzzPayment(
+        orderDoc,
+        req.user,
+        session
+      );
 
-    return res
-      .status(201)
-      .json(new ApiResponse(201, orderDoc, "Order created successfully"));
+      console.log(paymentResult.paymentUrl)
+
+      if (!paymentResult.success) {
+        // Restore product stock if payment initiation fails
+        await restoreProductStock(orderDoc.orderItems, session);
+        await session.abortTransaction();
+
+        return res
+          .status(400)
+          .json(
+            new ApiResponse(
+              400,
+              { error: paymentResult.error },
+              paymentResult.message
+            )
+          );
+      }
+
+      // Ensure we have a valid payment URL
+      if (!paymentResult.paymentUrl) {
+        await restoreProductStock(orderDoc.orderItems, session);
+        await session.abortTransaction();
+
+        return res
+          .status(500)
+          .json(new ApiResponse(500, null, "Failed to generate payment URL"));
+      }
+
+      await session.commitTransaction();
+      return res.status(200).json(
+        new ApiResponse(
+          200,
+          {
+            order: orderDoc,
+            payment_url: paymentResult.paymentUrl, // Send the raw URL string
+          },
+          "Payment initiated successfully"
+        )
+      );
+    }
   } catch (error) {
     await session.abortTransaction();
-    return handleMongoErrors(error, res);
+    console.error("Order creation error:", error);
+
+    // Handle specific MongoDB errors
+    if (error.name === "MongoError" && error.code === 11000) {
+      return res
+        .status(409)
+        .json(
+          new ApiResponse(
+            409,
+            null,
+            "Duplicate order detected. Please try again."
+          )
+        );
+    }
+
+    return res
+      .status(500)
+      .json(new ApiResponse(500, null, "Internal server error"));
   } finally {
     session.endSession();
   }

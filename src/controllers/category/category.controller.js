@@ -238,20 +238,55 @@ export const deleteCategory = asyncHandler(async (req, res) => {
   }
 
   try {
-    const products = await Product.find({ category: categoryId }).select("_id");
+    // Find all products in this category and its subcategories
+    const products = await Product.find({
+      $or: [
+        { category_id: categoryId },
+        {
+          subCategory_id: {
+            $in: await SubCategory.find({
+              parentCategory: categoryId,
+            }).distinct("_id"),
+          },
+        },
+        {
+          childSubCategory_id: {
+            $in: await ChildSubCategory.find({
+              parentCategory: categoryId,
+            }).distinct("_id"),
+          },
+        },
+      ],
+    }).select("_id");
+
     const productIds = products.map((p) => p._id);
 
-    // Find all subcategories and child subcategories
-    const subCategories = await SubCategory.find({
-      parentCategory: categoryId,
-    }).select("_id");
-    const subCategoryIds = subCategories.map((s) => s._id);
-
-    const childSubCategories = await ChildSubCategory.find({
-      parentCategory: categoryId,
-    }).select("_id");
-
     if (mode === "hard") {
+      // Enhanced check with detailed information
+      const { used, productsInOrders, productsInCarts } =
+        await checkIfProductsUsedInOrderOrCart(productIds);
+
+      if (used) {
+        return res
+          .status(400)
+          .json(
+            new ApiResponse(
+              400,
+              { productsInOrders, productsInCarts },
+              "Cannot hard delete category - some products are in active orders or carts"
+            )
+          );
+      }
+
+      // Proceed with hard delete if no products are in use
+      await Promise.all([
+        ChildSubCategory.deleteMany({ parentCategory: categoryId }),
+        SubCategory.deleteMany({ parentCategory: categoryId }),
+        Product.deleteMany({ _id: { $in: productIds } }),
+        Category.findByIdAndDelete(categoryId),
+      ]);
+    } else {
+      // Soft delete logic remains the same
       const { used } = await checkIfProductsUsedInOrderOrCart(productIds);
 
       if (used) {
@@ -261,24 +296,10 @@ export const deleteCategory = asyncHandler(async (req, res) => {
             new ApiResponse(
               400,
               null,
-              "Cannot hard delete category — products are in active orders or carts"
+              "Cannot delete product as it is being used in active orders or carts"
             )
           );
       }
-
-      await Promise.all([
-        ChildSubCategory.deleteMany({ parentCategory: categoryId }),
-        SubCategory.deleteMany({ parentCategory: categoryId }),
-        Product.deleteMany({
-          $or: [
-            { category: categoryId },
-            { subCategory: { $in: subCategoryIds } },
-          ],
-        }),
-        Category.findByIdAndDelete(categoryId),
-      ]);
-    } else {
-      // Soft delete
       await Promise.all([
         Category.findByIdAndUpdate(categoryId, { $set: { isDeleted: true } }),
         SubCategory.updateMany(
@@ -290,24 +311,13 @@ export const deleteCategory = asyncHandler(async (req, res) => {
           { $set: { isDeleted: true } }
         ),
         Product.updateMany(
-          {
-            $or: [
-              { category: categoryId },
-              { subCategory: { $in: subCategoryIds } },
-            ],
-          },
+          { _id: { $in: productIds } },
           { $set: { isDeleted: true, status: false } }
         ),
       ]);
     }
 
-    return res.json(
-      new ApiResponse(
-        200,
-        null,
-        `${mode} delete successful, processed in background`
-      )
-    );
+    return res.json(new ApiResponse(200, null, `${mode} delete successful`));
   } catch (error) {
     console.error("Delete Category Error:", error);
     return handleMongoErrors(error, res);

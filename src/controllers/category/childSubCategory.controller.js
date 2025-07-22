@@ -344,31 +344,77 @@ export const getDeletedChildSubCategories = async (req, res) => {
 
 //  DELETE  (soft | hard)
 export const deleteChildSubCategory = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { mode = "soft" } = req.query;
+
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    return res
+      .status(400)
+      .json(new ApiResponse(400, null, "Invalid childSubCategory ID"));
+  }
+
   try {
-    const { id } = req.params;
-    const { mode = "soft" } = req.query;
-
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res
-        .status(400)
-        .json(new ApiResponse(400, null, "Invalid childSubCategory ID"));
-    }
-
-    const child = await ChildSubCategory.findById(id);
-    if (!child) {
+    const childSubCategory = await ChildSubCategory.findById(id);
+    if (!childSubCategory) {
       return res
         .status(404)
         .json(new ApiResponse(404, null, "ChildSubCategory not found"));
     }
 
-    const productDocs = await Product.find({
-      childSubCategory_id: id,
-    }).select("_id");
-
-    const productIds = productDocs.map((p) => p._id);
+    // Find all related products
+    const products = await Product.find({ childSubCategory_id: id }).select(
+      "_id"
+    );
+    const productIds = products.map((p) => p._id);
 
     if (mode === "hard") {
+      // Enhanced check with detailed information
+      const { used, productsInOrders, productsInCarts } =
+        await checkIfProductsUsedInOrderOrCart(productIds);
+
+      if (used) {
+        return res.status(400).json(
+          new ApiResponse(
+            400,
+            {
+              productsInOrders,
+              productsInCarts,
+            },
+            "Cannot hard delete - these products are in active orders or carts: " +
+              `${productsInOrders.length} in orders, ${productsInCarts.length} in carts`
+          )
+        );
+      }
+
+      // Perform hard delete in transaction
+      const session = await mongoose.startSession();
+      session.startTransaction();
+
+      try {
+        // Delete products first
+        await Product.deleteMany({ childSubCategory_id: id }).session(session);
+
+        // Then delete the child subcategory
+        await ChildSubCategory.findByIdAndDelete(id).session(session);
+
+        await session.commitTransaction();
+
+        return res.json(
+          new ApiResponse(
+            200,
+            null,
+            "ChildSubCategory and related products hard deleted successfully"
+          )
+        );
+      } catch (error) {
+        await session.abortTransaction();
+        throw error;
+      } finally {
+        session.endSession();
+      }
+    } else {
       const { used } = await checkIfProductsUsedInOrderOrCart(productIds);
+
       if (used) {
         return res
           .status(400)
@@ -376,33 +422,45 @@ export const deleteChildSubCategory = asyncHandler(async (req, res) => {
             new ApiResponse(
               400,
               null,
-              "Cannot hard delete—products exist in active orders/carts"
+              "Cannot delete product as it is being used in active orders or carts"
             )
           );
       }
+      // Soft delete in transaction
+      const session = await mongoose.startSession();
+      session.startTransaction();
 
-      await Promise.all([
-        Product.deleteMany({ childSubCategory_id: id }),
-        ChildSubCategory.findByIdAndDelete(id),
-      ]);
+      try {
+        // Update child subcategory
+        await ChildSubCategory.findByIdAndUpdate(
+          id,
+          { $set: { isDeleted: true } },
+          { session }
+        );
 
-      return res.json(
-        new ApiResponse(200, null, "ChildSubCategory & products hard‑deleted")
-      );
+        // Update products
+        await Product.updateMany(
+          { childSubCategory_id: id },
+          { $set: { isDeleted: true, status: false } },
+          { session }
+        );
+
+        await session.commitTransaction();
+
+        return res.json(
+          new ApiResponse(
+            200,
+            null,
+            "ChildSubCategory and related products soft deleted successfully"
+          )
+        );
+      } catch (error) {
+        await session.abortTransaction();
+        throw error;
+      } finally {
+        session.endSession();
+      }
     }
-
-    // soft delete
-    await Promise.all([
-      ChildSubCategory.findByIdAndUpdate(id, { $set: { isDeleted: true } }),
-      Product.updateMany(
-        { childSubCategory_id: id },
-        { $set: { isDeleted: true, status: false } }
-      ),
-    ]);
-
-    return res.json(
-      new ApiResponse(200, null, "ChildSubCategory soft‑deleted")
-    );
   } catch (error) {
     console.error("Delete ChildSubCategory Error:", error);
     return handleMongoErrors(error, res);

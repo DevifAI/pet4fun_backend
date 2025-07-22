@@ -1,48 +1,102 @@
 import mongoose from "mongoose";
 
-const vetAppointmentSchema = new mongoose.Schema(
+const vetConsultationSchema = new mongoose.Schema(
   {
-    user_id: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      required: false,
-    },
-    guestInfo: {
-      name: String,
-      phone: String,
-      email: String,
-    },
-    appointmentType: {
+    // Pet Information
+    petName: {
       type: String,
-      enum: ["vet", "grooming"],
+      required: [true, "Pet name is required"],
+      trim: true,
+    },
+    petType: {
+      type: String,
+      required: [true, "Pet type is required"],
+      enum: ["dog", "cat", "bird", "rabbit", "reptile", "other"],
+      lowercase: true,
+    },
+    age: {
+      type: Number,
+      min: 0,
+      max: 30,
+    },
+    symptoms: {
+      type: String,
+      required: [true, "Symptoms/Reason is required"],
+      trim: true,
+    },
+
+    // Owner Information
+    ownerName: {
+      type: String,
+      required: [true, "Owner name is required"],
+      trim: true,
+    },
+    email: {
+      type: String,
+      required: [true, "Email is required"],
+      trim: true,
+      lowercase: true,
+      match: [/.+\@.+\..+/, "Please enter a valid email"],
+    },
+    phone: {
+      type: String,
+      required: [true, "Phone number is required"],
+      trim: true,
+    },
+
+    // Appointment Details
+    preferredDate: {
+      type: Date,
+      required: [true, "Preferred date is required"],
+      min: Date.now,
+    },
+    preferredTime: {
+      type: String,
+      required: [true, "Preferred time is required"],
+      enum: ["morning", "afternoon", "evening"],
+    },
+    urgency: {
+      type: String,
       required: true,
+      enum: ["normal", "urgent", "emergency"],
+      default: "normal",
     },
-    pet: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Product", // assuming Product is used for pets
-      required: false,
+
+    // Additional Information
+    additionalInfo: {
+      type: String,
+      trim: true,
     },
-    customPetInfo: {
-      name: String,
-      petType: {
-        type: String,
-        enum: ["dog", "cat", "rabbit", "bird", "fish", "other"],
-      },
-      breed: String,
-      age: String,
-      gender: { type: String, enum: ["male", "female"] },
-      color: String,
-    },
-    vetName: String,
-    appointmentDate: Date,
-    symptoms: String,
+
+    // System Fields
     status: {
       type: String,
-      enum: ["pending", "confirmed", "cancelled"],
+      enum: ["pending", "confirmed", "completed", "cancelled"],
       default: "pending",
     },
+    createdAt: {
+      type: Date,
+      default: Date.now,
+    },
   },
-  { timestamps: { createdAt: true, updatedAt: false } }
+  {
+    timestamps: {
+      createdAt: "createdAt",
+      updatedAt: "updatedAt",
+    },
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true },
+  }
 );
 
-export default mongoose.model("VetAppointment", vetAppointmentSchema);
+// Indexes for better query performance
+vetConsultationSchema.index({ preferredDate: 1 });
+vetConsultationSchema.index({ status: 1 });
+vetConsultationSchema.index({ email: 1 });
+
+const VetConsultation = mongoose.model(
+  "VetConsultation",
+  vetConsultationSchema
+);
+
+export default VetConsultation;
